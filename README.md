@@ -1,6 +1,6 @@
-# mini-rag
+# adv-rag
 
-This is an implementation of a RAG model for question answering.
+This is an implementation of a RAG system for answering questions
 
 ## Requirements
 
