@@ -25,11 +25,9 @@ class RAGService:
         self.template_parser = template_parser
 
     def get_collection_name(self, project_id: str) -> str:
-        """Generates a unique collection name based on project ID and embedding size."""
         return f"collection_{self.embedding_client.embedding_size}_{project_id}".strip()
 
     async def search_collection(self, project: Project, query: str, limit: int) -> List[RetrievedDocument]:
-        """Searches the vector collection for documents relevant to the query."""
         collection_name = self.get_collection_name(project_id=str(project.project_id))
         query_vector = self.embedding_client.embed_text(text=query, document_type=DocumentTypeEnum.QUERY.value)
         
@@ -42,21 +40,18 @@ class RAGService:
         )
 
     async def answer_question(self, project: Project, query: str, request: Request, limit: int = 10):
-        """
-        Answers a user's question by selecting the appropriate RAG path (text or SQL).
-        Returns the answer, the full prompt, and chat history.
-        """
         retrieved_docs = await self.search_collection(project=project, query=query, limit=limit)
         if not retrieved_docs:
             return None, None, None
 
-        # Check if the top result suggests a SQL query
-        top_doc = retrieved_docs[0]
-        if top_doc.metadata and top_doc.metadata.get("type") == "pgsql_table_schema":
-            logger.info("SQL RAG path triggered.")
-            return await self._get_answer_from_sql(query=query, schema_doc=top_doc, request=request)
+        # ✅ UPDATED: Iterate through all retrieved docs to find the first schema document.
+        for doc in retrieved_docs:
+            if doc.metadata and doc.metadata.get("type") == "pgsql_table_schema":
+                logger.info("SQL RAG path triggered by a schema document.")
+                return await self._get_answer_from_sql(query=query, schema_doc=doc, request=request)
 
-        logger.info("Standard Text RAG path triggered.")
+        # ✅ UPDATED: If no schema is found after checking all docs, fall back to text RAG.
+        logger.info("Standard Text RAG path triggered as no schema was found in retrieved docs.")
         return self._get_answer_from_text(query=query, text_docs=retrieved_docs)
 
     async def _get_answer_from_sql(self, query: str, schema_doc: RetrievedDocument, request: Request):
@@ -93,7 +88,6 @@ class RAGService:
         )
         final_answer = self.generation_client.generate_text(prompt=final_answer_prompt)
         
-        # In SQL RAG, the "thinking process" can be the generated SQL and its results
         thinking_process = f"<think>\nGenerated SQL:\n```sql\n{clean_sql}\n```\n\nQuery Results:\n{sql_results_text}\n</think>"
         final_answer_with_context = f"{thinking_process}{final_answer}"
 
