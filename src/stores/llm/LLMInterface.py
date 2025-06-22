@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Union
 
 class LLMInterface(ABC):
 
@@ -11,7 +12,7 @@ class LLMInterface(ABC):
         pass
 
     @abstractmethod
-    def generate_text(self, prompt: str, chat_history: list=[], max_output_tokens: int=None,
+    def generate_text(self, prompt: Union[str, dict], chat_history: list=[], max_output_tokens: int=None,
                             temperature: float = None):
         pass
 
