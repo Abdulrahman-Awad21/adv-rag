@@ -27,30 +27,37 @@ if "project_history_list" not in st.session_state:
 if "initial_project_load_done" not in st.session_state:
     st.session_state.initial_project_load_done = False
 
+# ✅ --- NEW HELPER FUNCTION TO PARSE AND DISPLAY ASSISTANT MESSAGES ---
 def parse_and_display_assistant_message(content: str):
     """
-    Parses content for <think> tags and displays it with an expander.
+    Parses content for <think> tags and displays the thought process in a
+    collapsible expander, showing the final response as the main message.
     """
     if not isinstance(content, str):
         st.markdown(str(content))
         return
 
+    # Use regex to find the thinking block and the final response
     match = re.search(r"<think>(.*?)</think>(.*)", content, re.DOTALL)
     
     if match:
         thinking_text = match.group(1).strip()
         final_response = match.group(2).strip()
     else:
+        # If no <think> block is found, the whole content is the final response
         thinking_text = None
         final_response = content.strip()
 
+    # Always display the final response as the main message content
     if final_response:
         st.markdown(final_response)
     
+    # If a thinking block existed, display it inside an expander
     if thinking_text:
         with st.expander("Show thought process"):
-            st.markdown(thinking_text)
+            st.markdown(f"```{thinking_text}```")
     
+    # If for some reason there's no response but also no thinking text, show the original content
     if not final_response and not thinking_text:
         st.markdown(content)
 
@@ -304,16 +311,15 @@ elif st.session_state.current_phase == "chat":
 
     if st.button(f"➕ Upload More Files to Project {st.session_state.project_id}"):
         st.session_state.current_phase = "upload"
-        # ✅ REMOVED the line that causes the error.
         st.rerun()
 
+    # ✅ UPDATED: Render chat history using the new parser function
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             if message["role"] == "assistant":
                 parse_and_display_assistant_message(message["content"])
             else:
                 st.markdown(message["content"])
-
 
     if prompt := st.chat_input(f"Ask about Project {st.session_state.project_id}..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -325,7 +331,11 @@ elif st.session_state.current_phase == "chat":
             api_response = get_rag_answer(st.session_state.project_id, prompt)
             if api_response and api_response.get("signal") == "rag_answer_success":
                 answer = api_response.get("answer", "Sorry, I couldn't retrieve an answer.")
+                
+                # ✅ UPDATED: Render new response using the new parser function
                 parse_and_display_assistant_message(answer)
+                
+                # Save the full response (with tags) to history so it can be re-rendered correctly
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 save_message_to_backend(st.session_state.project_id, "assistant", answer)
             else:

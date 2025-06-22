@@ -1,67 +1,73 @@
 from string import Template
 
-#### RAG PROMPTS ####
-
-#### System ####
-system_prompt = Template("\n".join([
-    "You are an assistant to generate a response for the user.",
-    "You will be provided by a set of docuemnts associated with the user's query.",
-    "You have to generate a response based on the documents provided.",
-    "Ignore the documents that are not relevant to the user's query.",
-    "You can applogize to the user if you are not able to generate a response.",
-    "You have to generate response in the same language as the user's query.",
-    "Be polite and respectful to the user.",
-    "Be precise and concise in your response. Avoid unnecessary information.",
-]))
-
-#### Document ####
-document_prompt = Template(
-    "\n".join([
-        "## Document No: $doc_num",
-        "### Content: $chunk_text",
-    ])
-)
-
-#### Footer ####
-footer_prompt = Template("\n".join([
-    "Based only on the above documents, please generate an answer for the user.",
+# --- REVISED TEXT-ONLY SYNTHESIS PROMPT ---
+text_synthesis_prompt = Template("\n".join([
+    "You are an expert AI assistant.",
+    "Your knowledge is strictly limited to the context provided below.",
+    "Answer the user's question accurately and concisely based ONLY on this context.",
+    "If the answer is not available in the context, state that you do not have that information.",
+    "IMPORTANT: Do not mention 'the context' or 'the provided documents' or 'database' or 'SQL query' in your response. Answer as if you know the information directly.",
+    "IMPORTANT: Do not refer to 'Database Information', 'Additional Text Information', or the fact that a query was run. Present the final answer in a direct, natural way.",
+    "",
+    "## Context:",
+    "$text_documents",
+    "",
     "## Question:",
-    "$query",
+    "$question",
     "",
     "## Answer:",
 ]))
 
-# ✅ --- NEW PROMPTS FOR SQL RAG ---
-
-
-#### SQL Generation ####
-sql_generation_prompt = Template("\n".join([
-    "Given the following database table schema and a user's question, your task is to generate a single, syntactically correct PostgreSQL SELECT query to answer the question.",
-    "IMPORTANT: You MUST ONLY output the raw SQL query. Do not include any explanations, comments, reasoning, backticks, markdown, or any text other than the SQL query itself.",
-    "Do not use any tables or columns not listed in the provided schema.",
+# --- REVISED HYBRID SYNTHESIS PROMPT ---
+hybrid_synthesis_prompt = Template("\n".join([
+    "You are an expert AI assistant. Your task is to synthesize a single, comprehensive answer to the user's question using the 'Database Information' and 'Additional Text Information' provided below.",
+    "Your knowledge is strictly limited to these sources.",
+    "1. Prioritize the most relevant and specific information to answer the question.",
+    "2. If one source contradicts the other, point this out or prefer the more specific data.",
+    "3. If information is partially available (e.g., data for a different year), state the caveat clearly. For example: 'While I don't have data for 2025, the figure for 2024 was...'",
+    "4. If the information required is not in any of the sources, state that the information is not available.",
+    "IMPORTANT: Do not refer to 'Database Information', 'Additional Text Information', or the fact that a query was run. Present the final answer in a direct, natural way.",
     "",
-    "## Schema:",
-    "$schema",
-    "",
-    "## Question:",
+    "## User's Question:",
     "$question",
     "",
-    "## SQL Query:",
-]))
-
-
-#### Final Answer from SQL Results ####
-final_answer_prompt = Template("\n".join([
-    "You are a helpful data analyst assistant. A user asked a question, and a SQL query was run against a database to get the following data.",
-    "Your task is to formulate a clear, concise, and natural language answer to the user's original question based on the provided data.",
-    "If the data is empty or indicates an error, inform the user that the requested information could not be found or there was a problem.",
-    "Do not mention that you ran a SQL query. Just provide the answer directly.",
-    "",
-    "## User's Original Question:",
-    "$question",
-    "",
-    "## Data from Database:",
+    "## Database Information:",
     "$sql_results",
     "",
-    "## Final Answer:",
+    "## Additional Text Information:",
+    "$text_documents",
+    "",
+    "## Final Comprehensive Answer:",
+]))
+
+# --- ✅ DEFINITIVE SQL GENERATION PROMPT (STRUCTURED THINKING) ---
+sql_generation_prompt = Template("\n".join([
+    "You are an expert PostgreSQL query writer. Your task is to write a single, clean, executable PostgreSQL SELECT query.",
+    "Follow these steps:",
+    "1. First, think step-by-step inside `<think>` tags. Analyze the schema, the user's question, column names, and potential values. Consider casing, typos, and how to correctly filter the data.",
+    "2. After the closing `</think>` tag, on a new line, write the final, syntactically correct PostgreSQL query and nothing else.",
+    "",
+    "---",
+    "## Example:",
+    "",
+    "### Schema:",
+    'CREATE TABLE employees (id INT, name VARCHAR(100), department VARCHAR(50), salary INT);',
+    "",
+    "### Question:",
+    "What are the names of employees in the 'Sales' department?",
+    "",
+    "### Response:",
+    "<think>The user wants the 'name' from the 'employees' table. I need to filter where the 'department' column is exactly 'Sales'. The query is straightforward.</think>",
+    'SELECT "name" FROM "employees" WHERE "department" = \'Sales\';',
+    "---",
+    "",
+    "## Your Task:",
+    "",
+    "### Schema:",
+    "$schema",
+    "",
+    "### Question:",
+    "$question",
+    "",
+    "### Response:",
 ]))
