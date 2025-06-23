@@ -1,3 +1,5 @@
+# frontend/app.py
+
 import streamlit as st
 import requests
 import os
@@ -26,38 +28,35 @@ if "project_history_list" not in st.session_state:
     st.session_state.project_history_list = []
 if "initial_project_load_done" not in st.session_state:
     st.session_state.initial_project_load_done = False
+# Session state for the reset confirmation flow
+if "confirm_reset_step_1" not in st.session_state:
+    st.session_state.confirm_reset_step_1 = False
+if "reset_success_message" not in st.session_state:
+    st.session_state.reset_success_message = None
 
-# ✅ --- NEW HELPER FUNCTION TO PARSE AND DISPLAY ASSISTANT MESSAGES ---
+
+# ✅ --- HELPER FUNCTION TO PARSE AND DISPLAY ASSISTANT MESSAGES ---
 def parse_and_display_assistant_message(content: str):
-    """
-    Parses content for <think> tags and displays the thought process in a
-    collapsible expander, showing the final response as the main message.
-    """
     if not isinstance(content, str):
         st.markdown(str(content))
         return
 
-    # Use regex to find the thinking block and the final response
     match = re.search(r"<think>(.*?)</think>(.*)", content, re.DOTALL)
     
     if match:
         thinking_text = match.group(1).strip()
         final_response = match.group(2).strip()
     else:
-        # If no <think> block is found, the whole content is the final response
         thinking_text = None
         final_response = content.strip()
 
-    # Always display the final response as the main message content
     if final_response:
         st.markdown(final_response)
     
-    # If a thinking block existed, display it inside an expander
     if thinking_text:
         with st.expander("Show thought process"):
             st.markdown(f"```{thinking_text}```")
     
-    # If for some reason there's no response but also no thinking text, show the original content
     if not final_response and not thinking_text:
         st.markdown(content)
 
@@ -81,6 +80,7 @@ def handle_api_response(response, success_status=200, is_json=True):
             st.error(f"API Error (Status {response.status_code}): {response.text}")
         return None
 
+# ... (other API helpers remain the same: upload_files, process_data, etc.)
 def upload_files_to_backend(project_id, files_to_upload):
     if not files_to_upload: st.warning("No files selected."); return None
     api_files = [('files', (f.name, f.getvalue(), f.type)) for f in files_to_upload]
@@ -129,6 +129,9 @@ def fetch_project_history_from_backend():
             except requests.exceptions.JSONDecodeError: 
                 st.sidebar.error("Failed to parse project list.")
                 return []
+        # If the API returns a redirect (like after a reset), treat it as an empty list
+        elif response.status_code == 307:
+             return []
         else: 
             st.sidebar.error(f"Failed to fetch projects (API Status: {response.status_code}).")
             return []
@@ -158,6 +161,23 @@ def save_message_to_backend(project_id: str, role: str, content: str):
         st.error(f"Network error saving message: {e}")
         return None
 
+# ✅ --- UPDATED API HELPER FOR SYSTEM NUKE ---
+def nuke_system_on_backend(api_key: str):
+    """Calls the protected admin endpoint to nuke all system data."""
+    if not api_key:
+        st.error("API Key is required to perform a system reset.")
+        return None
+    
+    headers = {"X-Reset-API-Key": api_key}
+    try:
+        # Calls the new, more powerful endpoint
+        response = requests.delete(f"{API_BASE_URL}/admin/nuke-and-rebuild-db", headers=headers, timeout=300)
+        return handle_api_response(response, success_status=200)
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error during system reset: {e}")
+        return None
+
+
 # --- Function to handle project selection/creation ---
 def select_project(selected_id_str: str, is_new_project_creation=False):
     if not selected_id_str or not selected_id_str.strip():
@@ -165,6 +185,10 @@ def select_project(selected_id_str: str, is_new_project_creation=False):
         return
 
     if st.session_state.project_id != selected_id_str or is_new_project_creation:
+        # Clear the reset success message when changing projects
+        if "reset_success_message" in st.session_state:
+            st.session_state.reset_success_message = None
+            
         st.session_state.project_id = selected_id_str
         st.session_state.uploaded_file_names = [] 
         
@@ -207,6 +231,14 @@ st.set_page_config(page_title="Mini RAG UI", layout="wide")
 # --- Sidebar ---
 with st.sidebar:
     st.title("Project Navigation")
+    
+    # Display the reset success message if it exists
+    if st.session_state.get("reset_success_message"):
+        st.success(st.session_state.reset_success_message)
+        # Clear the message so it doesn't reappear on every interaction
+        st.session_state.reset_success_message = None
+        time.sleep(3) # Give user time to read
+        st.rerun() # Force a clean refresh
 
     if not st.session_state.initial_project_load_done:
         with st.spinner("Loading project list..."):
@@ -220,12 +252,7 @@ with st.sidebar:
             pass
 
     if st.button("🔄 Refresh Project List", use_container_width=True):
-        with st.spinner("Refreshing project list..."):
-            st.session_state.project_history_list = fetch_project_history_from_backend()
-        if st.session_state.project_id and st.session_state.project_id not in st.session_state.project_history_list:
-            st.session_state.project_id = None
-            st.session_state.messages = []
-            st.session_state.current_phase = "upload"
+        st.session_state.initial_project_load_done = False
         st.rerun()
 
     if st.button("➕ Create New Project", use_container_width=True, type="primary"):
@@ -247,6 +274,44 @@ with st.sidebar:
     st.subheader("API Endpoint")
     st.info(f"{API_BASE_URL}")
 
+    # ✅ --- UPDATED DANGER ZONE ---
+    st.divider()
+    with st.expander("⚠️ Danger Zone"):
+        st.warning("This will permanently delete ALL data, files, and tables.")
+        
+        reset_api_key_input = st.text_input("Enter Reset API Key", type="password")
+        
+        if st.button("Initiate System Wipe", use_container_width=True):
+            if not reset_api_key_input:
+                st.error("You must enter the API key to initiate a reset.")
+            else: 
+                st.session_state.confirm_reset_step_1 = True
+
+        if st.session_state.confirm_reset_step_1:
+            st.error("ARE YOU SURE? All data will be dropped and cannot be recovered.")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ Yes, Wipe Everything", use_container_width=True, type="primary"):
+                    with st.spinner("Wiping system data... Please wait."):
+                        result = nuke_system_on_backend(reset_api_key_input)
+                    
+                    if result:
+                        # Set a success message in session state instead of trying to reset here
+                        st.session_state.reset_success_message = "System data wiped! Restart the application to finalize."
+                        # Clear sensitive info and confirmation state
+                        st.session_state.confirm_reset_step_1 = False
+                        st.rerun()
+                    else:
+                        st.error("System wipe failed. Check the error message above.")
+                        st.session_state.confirm_reset_step_1 = False
+                        st.rerun()
+
+            with col2:
+                if st.button("Cancel", use_container_width=True):
+                    st.session_state.confirm_reset_step_1 = False
+                    st.rerun()
+
+# ... (The rest of the Main Panel logic remains exactly the same) ...
 # --- Main Panel ---
 if not st.session_state.project_id:
     st.warning("Please select a project or create a new one from the sidebar to begin.")
@@ -313,7 +378,6 @@ elif st.session_state.current_phase == "chat":
         st.session_state.current_phase = "upload"
         st.rerun()
 
-    # ✅ UPDATED: Render chat history using the new parser function
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             if message["role"] == "assistant":
@@ -332,10 +396,8 @@ elif st.session_state.current_phase == "chat":
             if api_response and api_response.get("signal") == "rag_answer_success":
                 answer = api_response.get("answer", "Sorry, I couldn't retrieve an answer.")
                 
-                # ✅ UPDATED: Render new response using the new parser function
                 parse_and_display_assistant_message(answer)
                 
-                # Save the full response (with tags) to history so it can be re-rendered correctly
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 save_message_to_backend(st.session_state.project_id, "assistant", answer)
             else:
