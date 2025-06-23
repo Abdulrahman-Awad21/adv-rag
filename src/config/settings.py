@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     OPENAI_API_URL: str = None
     COHERE_API_KEY: str = None
     GROQ_API_KEY: str = None   
+    OPENROUTER_API_KEY: str = None
+    GOOGLE_API_KEY: str = None
     MISTRAL_API_KEY: str = None   
 
     VISION_MODEL_ID: str = None
