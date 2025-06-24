@@ -29,7 +29,13 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = None
     MISTRAL_API_KEY: str = None   
 
+    SECRET_KEY: str = None
+    ALGORITHM: str = None
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = None
     ADMIN_RESET_API_KEY: str = None
+    INITIAL_ADMIN_USER: Optional[str] = None
+    INITIAL_ADMIN_PASSWORD: Optional[str] = None
+
 
     VISION_MODEL_ID: str = None
     GENERATION_MODEL_ID_LITERAL: List[str] = None

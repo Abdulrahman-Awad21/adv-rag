@@ -11,6 +11,14 @@ POSTGRES_HOST="pgvector"
 POSTGRES_PORT=5432
 POSTGRES_MAIN_DATABASE="minirag"
 
+
+# ========================= Security Config =========================
+SECRET_KEY="your-32-byte-hex-secret-key-goes-here"
+ALGORITHM="HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+ADMIN_RESET_API_KEY="SecureAdminKey"
+
+
 # ========================= LLM Config =========================
 GENERATION_BACKEND = "GROQ" 
 EMBEDDING_BACKEND = "COHERE"

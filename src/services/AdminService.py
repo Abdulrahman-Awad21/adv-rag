@@ -50,7 +50,7 @@ class AdminService:
                     WHERE schemaname = 'public' AND (
                         tablename LIKE 'pgdata_%' OR
                         tablename LIKE 'collection_%' OR
-                        tablename IN ('projects', 'assets', 'chunks', 'chat_histories', 'alembic_version')
+                        tablename IN ('projects', 'assets', 'chunks', 'chat_histories', 'alembic_version', 'users')
                     );
                 """)
                 result = await session.execute(get_tables_sql)

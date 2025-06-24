@@ -1,4 +1,6 @@
-from fastapi import APIRouter, status, Request
+# src/routes/nlp.py
+
+from fastapi import APIRouter, status, Request, Depends # Add Depends
 from fastapi.responses import JSONResponse
 from tqdm.auto import tqdm
 import logging
@@ -9,21 +11,22 @@ from models.ChunkModel import ChunkModel
 from models import ResponseSignal
 from services.IndexingService import IndexingService
 from services.RAGService import RAGService
+from .project import verify_project_access # Import project access verifier
 
 logger = logging.getLogger('uvicorn.error')
 
 nlp_router = APIRouter(
     prefix="/api/v1/nlp",
     tags=["api_v1", "nlp"],
+    dependencies=[Depends(verify_project_access)] # Secure all routes here
 )
 
 @nlp_router.post("/index/push/{project_id}")
 async def index_project(request: Request, project_id: int, push_request: PushRequest):
     project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
     project = await project_model.get_project_or_create_one(project_id=project_id)
-    if not project:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"signal": ResponseSignal.PROJECT_NOT_FOUND_ERROR.value})
-
+    # No need to check for project, dependency handled it
+    # Rest of the function remains the same...
     indexing_service = IndexingService(
         vectordb_client=request.app.vectordb_client,
         embedding_client=request.app.embedding_client

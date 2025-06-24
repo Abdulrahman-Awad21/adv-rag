@@ -1,24 +1,44 @@
 from typing import List
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.future import select
 
 from models.ProjectModel import ProjectModel
 from models.ChatHistoryModel import ChatHistoryModel
-from models.db_schemes import Project, ChatHistory # For type hinting
+from models.db_schemes import Project, ChatHistory, User # Import User
 
 class ProjectService:
     def __init__(self, db_client: sessionmaker):
         self.db_client = db_client
 
-    async def list_all_projects(self, page: int = 1, page_size: int = 1000) -> List[Project]:
-        """Lists all projects from the database."""
+    async def list_all_projects_for_user(self, user: User, page: int = 1, page_size: int = 1000) -> List[Project]:
+        """Lists all projects owned by a specific user. Admins get all projects."""
         project_model = await ProjectModel.create_instance(self.db_client)
-        projects, _ = await project_model.get_all_projects_for_view(page=page, page_size=page_size)
-        return projects
+        
+        async with self.db_client() as session:
+            if user.role == "admin":
+                query = select(Project)
+            else:
+                query = select(Project).where(Project.owner_id == user.id)
+            
+            result = await session.execute(query.offset((page - 1) * page_size).limit(page_size))
+            return result.scalars().all()
 
-    async def get_or_create_project(self, project_id: int) -> Project:
-        """Retrieves a project by its ID, creating it if it doesn't exist."""
+    async def get_project_by_id(self, project_id: int) -> Project:
+        """Retrieves a project by its ID, without creating it."""
+        async with self.db_client() as session:
+            # Using session.get is efficient for primary key lookups
+            project = await session.get(Project, project_id)
+        return project
+
+    async def create_project(self, project_name: str, owner: User) -> Project:
+        """Creates a new project owned by the given user."""
         project_model = await ProjectModel.create_instance(self.db_client)
-        return await project_model.get_project_or_create_one(project_id=project_id)
+        new_project = Project(
+            # project_name could be added to schema if desired
+            owner_id=owner.id
+        )
+        # Note: project_id is autoincremented by the DB
+        return await project_model.create_project(new_project)
         
     async def add_chat_message(self, project_id: int, role: str, content: str) -> ChatHistory:
         """Adds a new message to a project's chat history."""
