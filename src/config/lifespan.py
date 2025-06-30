@@ -1,10 +1,21 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+import logging
+from sqlalchemy import update
+
+from models.db_schemes.minirag.schemes.user import User
+from services.AuthService import AuthService
+
 from .settings import get_settings
 from .database import setup_database_pool
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from stores.llm.templates.template_parser import TemplateParser
+from services.EmailService import EmailService
+from services.UserService import UserService
+from routes.schemes.user import UserCreate
+
+logger = logging.getLogger('uvicorn.error')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -16,6 +27,33 @@ async def lifespan(app: FastAPI):
 
     # Setup Database
     app.async_db_engine, app.sync_db_engine, app.db_client = setup_database_pool(settings)
+
+    # Setup Email Service
+    app.email_service = EmailService(settings=settings)
+
+      # Create initial admin user if configured
+    if settings.INITIAL_ADMIN_EMAIL and settings.INITIAL_ADMIN_PASSWORD:
+        auth_service = AuthService(app.db_client, settings)
+        admin_user = await auth_service.get_user_by_email(settings.INITIAL_ADMIN_EMAIL)
+        
+        if not admin_user:
+            logger.info("Initial admin user not found, creating one.")
+            hashed_password = auth_service.get_password_hash(settings.INITIAL_ADMIN_PASSWORD)
+            
+            new_admin = User(
+                email=settings.INITIAL_ADMIN_EMAIL,
+                hashed_password=hashed_password,
+                role="admin",
+                password_change_required=False # Admin is ready to go
+            )
+            
+            async with app.db_client() as session:
+                session.add(new_admin)
+                await session.commit()
+            logger.info(f"Initial admin user '{settings.INITIAL_ADMIN_EMAIL}' created successfully.")
+        else:
+            logger.info("Initial admin user already exists.")
+
 
     # Setup LLM Clients
     llm_factory = LLMProviderFactory(settings)

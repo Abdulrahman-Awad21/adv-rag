@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from pydantic import ValidationError
+from pydantic import ValidationError, EmailStr
 
 from config.settings import get_settings, Settings
 from services.AuthService import AuthService
@@ -11,11 +11,10 @@ from models.db_schemes import User
 # This tells FastAPI where to look for the token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
 
-def get_auth_service(settings: Settings = Depends(get_settings), request: Request = None) -> AuthService:
+def get_auth_service(request: Request, settings: Settings = Depends(get_settings)) -> AuthService:
     """Dependency to get an instance of the AuthService."""
-    if request and hasattr(request.app, 'db_client'):
-        return AuthService(db_client=request.app.db_client, app_settings=settings)
-    raise RuntimeError("Application state `db_client` not found.")
+    # This was fixed in the previous step and is correct.
+    return AuthService(db_client=request.app.db_client, app_settings=settings)
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -33,14 +32,23 @@ async def get_current_user(
     )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        
+        # The "sub" (subject) claim holds the user's email
+        email: EmailStr = payload.get("sub")
+        if email is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
+        
+        # We can create a TokenData object for consistency if needed, but we already have the email
+        token_data = TokenData(email=email)
+
     except (JWTError, ValidationError):
         raise credentials_exception
     
-    user = await auth_service.get_user(username=token_data.username)
+    # --- THIS IS THE FIX ---
+    # Call the correct method `get_user_by_email` and pass the email from the token.
+    user = await auth_service.get_user_by_email(email=token_data.email)
+    # --- END OF FIX ---
+
     if user is None or not user.is_active:
         raise credentials_exception
     return user

@@ -1,5 +1,3 @@
-# frontend/app.py
-
 import streamlit as st
 import requests
 import os
@@ -7,7 +5,7 @@ from dotenv import load_dotenv
 import time
 import pandas as pd
 from typing import List, Dict, Any, Optional
-import re
+import jwt
 
 # --- Configuration ---
 load_dotenv()
@@ -21,10 +19,9 @@ def init_session_state():
         "auth_token": None,
         "username": None,
         "role": None,
-        "current_view": "login", # login, uploader, admin, chatter
+        "current_view": "login",
         "selected_project_id": None,
         "messages": [],
-        "shareable_link": None,
         "project_list": []
     }
     for key, value in defaults.items():
@@ -32,16 +29,13 @@ def init_session_state():
             st.session_state[key] = value
 
 # --- API Helper Functions ---
-# All helpers now include the auth token in headers.
 
 def get_auth_header() -> Optional[Dict[str, str]]:
-    """Constructs the authorization header if a token exists."""
     if st.session_state.auth_token:
         return {"Authorization": f"Bearer {st.session_state.auth_token}"}
     return None
 
 def handle_api_error(response, context="API"):
-    """Unified error handler for API responses."""
     try:
         error_data = response.json()
         detail = error_data.get('detail', 'Unknown error')
@@ -49,31 +43,64 @@ def handle_api_error(response, context="API"):
     except requests.exceptions.JSONDecodeError:
         st.error(f"{context} Error (Status {response.status_code}): {response.text}")
 
-def login_user(username, password):
-    """Authenticates the user and returns the token."""
+def login_user(email, password):
     try:
-        response = requests.post(f"{API_BASE_URL}/token", data={"username": username, "password": password})
+        response = requests.post(f"{API_BASE_URL}/token", data={"username": email, "password": password})
         if response.status_code == 200:
             return response.json()
-        else:
-            handle_api_error(response, "Login")
-            return None
+        handle_api_error(response, "Login")
+        return None
     except requests.exceptions.RequestException as e:
         st.error(f"Network error during login: {e}")
         return None
 
+def set_initial_password(token, new_password):
+    payload = {"token": token, "new_password": new_password}
+    try:
+        response = requests.post(f"{API_BASE_URL}/set-initial-password", json=payload)
+        if response.status_code == 200:
+            st.success("Password set successfully! You can now log in.")
+            return True
+        handle_api_error(response, "Set Password")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error: {e}")
+        return False
+
+def request_password_reset(email):
+    try:
+        response = requests.post(f"{API_BASE_URL}/forgot-password", json={"email": email})
+        if response.status_code == 202:
+            st.info("If an account with that email exists, a password reset link has been sent.")
+            return True
+        handle_api_error(response, "Password Reset Request")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error: {e}")
+        return False
+        
+def reset_password_with_token(token, new_password):
+    payload = {"token": token, "new_password": new_password}
+    try:
+        response = requests.post(f"{API_BASE_URL}/reset-password", json=payload)
+        if response.status_code == 200:
+            st.success("Password has been reset successfully! You can now log in.")
+            return True
+        handle_api_error(response, "Password Reset")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error: {e}")
+        return False
+
 def fetch_projects():
-    """Fetches projects for the current user."""
     headers = get_auth_header()
     if not headers: return []
     try:
         response = requests.get(f"{API_BASE_URL}/projects/", headers=headers)
         if response.status_code == 200:
-            # The backend now returns a list of dicts, e.g., [{"project_id": "1"}]
             return [item['project_id'] for item in response.json()]
-        else:
-            handle_api_error(response, "Fetch Projects")
-            return []
+        handle_api_error(response, "Fetch Projects")
+        return []
     except requests.exceptions.RequestException as e:
         st.error(f"Network error fetching projects: {e}")
         return []
@@ -82,13 +109,10 @@ def create_project_on_backend():
     headers = get_auth_header()
     if not headers: return None
     try:
-        # Assuming the create endpoint doesn't need a body for now
         response = requests.post(f"{API_BASE_URL}/projects/", headers=headers, json={})
-        if response.status_code == 201:
-            return response.json()
-        else:
-            handle_api_error(response, "Create Project")
-            return None
+        if response.status_code == 201: return response.json()
+        handle_api_error(response, "Create Project")
+        return None
     except requests.exceptions.RequestException as e:
         st.error(f"Network error creating project: {e}")
         return None
@@ -152,11 +176,9 @@ def fetch_chat_history_from_backend(project_id):
         response = requests.get(f"{API_BASE_URL}/projects/{project_id}/chat_history", headers=headers)
         if response.status_code == 200:
             return [{"role": msg.get("role"), "content": msg.get("content")} for msg in response.json()]
-        else:
-            # Don't show error if it's just a new project with no history (404)
-            if response.status_code != 404:
-                handle_api_error(response, "Fetch Chat History")
-            return []
+        if response.status_code != 404:
+            handle_api_error(response, "Fetch Chat History")
+        return []
     except requests.exceptions.RequestException as e:
         st.error(f"Network error fetching chat history: {e}")
         return []
@@ -187,13 +209,15 @@ def get_users_from_backend():
         st.error(f"Network error getting users: {e}")
         return []
 
-def create_user_on_backend(username, password, role):
+def create_user_on_backend(email, role):
     headers = get_auth_header()
     if not headers: return None
-    payload = {"username": username, "password": password, "role": role}
+    payload = {"email": email, "role": role}
     try:
         response = requests.post(f"{API_BASE_URL}/users/", json=payload, headers=headers)
-        if response.status_code == 201: return response.json()
+        if response.status_code == 201:
+            st.success(f"Successfully created user {email}. They will receive an email with instructions to set their password.")
+            return response.json()
         handle_api_error(response, "Create User")
         return None
     except requests.exceptions.RequestException as e:
@@ -223,70 +247,106 @@ def nuke_system_on_backend():
         if response.status_code == 200:
             st.success("System wipe successful!")
             return response.json()
-        else:
-            handle_api_error(response, "System Wipe")
-            return None
+        handle_api_error(response, "System Wipe")
+        return None
     except requests.exceptions.RequestException as e:
         st.error(f"Network error during system wipe: {e}")
         return None
 
-
 # --- UI Rendering Functions ---
 
 def render_login_page():
-    """Displays the login form."""
     st.set_page_config(page_title="Login - Mini RAG", layout="centered")
     st.title("Welcome to Adv-RAG")
     
     with st.form("login_form"):
-        username = st.text_input("Username")
+        email = st.text_input("Email")
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Login")
 
         if submitted:
-            if not username or not password:
-                st.error("Please enter both username and password.")
+            if not email or not password:
+                st.error("Please enter both email and password.")
             else:
                 with st.spinner("Authenticating..."):
-                    token_info = login_user(username, password)
+                    token_info = login_user(email, password)
                 if token_info and "access_token" in token_info:
                     st.session_state.logged_in = True
                     st.session_state.auth_token = token_info["access_token"]
-                    # For simplicity, we decode the role from the token on the frontend
-                    # In a real high-security app, you'd fetch user profile from a /users/me endpoint
-                    import jwt
                     try:
                         decoded_token = jwt.decode(token_info["access_token"], options={"verify_signature": False})
                         st.session_state.username = decoded_token.get("sub")
                         st.session_state.role = decoded_token.get("role")
-                    except Exception:
-                        st.session_state.username = "User"
-                        st.session_state.role = "chatter"
-
+                    except jwt.PyJWTError as e:
+                        st.error(f"Could not decode authentication token: {e}")
+                        handle_logout(rerun=False)
+                        return
                     st.success("Login successful!")
                     time.sleep(1)
                     st.rerun()
-                # Error is already shown by login_user function
+    
+    if st.button("Forgot your password?", type="secondary"):
+        st.query_params["view"] = "forgot_password"
+
+def render_forgot_password_page():
+    st.set_page_config(page_title="Forgot Password", layout="centered")
+    st.title("Forgot Password")
+    with st.form("forgot_password_form"):
+        email = st.text_input("Enter your account email")
+        submitted = st.form_submit_button("Send Reset Link")
+        if submitted:
+            if request_password_reset(email):
+                st.session_state.view = "login" # Go back to login after request
+                time.sleep(3)
+                st.query_params.clear()
+
+def render_set_password_page(token):
+    st.set_page_config(page_title="Set Your Password", layout="centered")
+    st.title("Set Your Password")
+    with st.form("set_password_form"):
+        password = st.text_input("New Password", type="password")
+        confirm_password = st.text_input("Confirm New Password", type="password")
+        submitted = st.form_submit_button("Set Password")
+        if submitted:
+            if not password or password != confirm_password:
+                st.error("Passwords do not match or are empty.")
+            else:
+                if set_initial_password(token, password):
+                    st.session_state.view = "login"
+                    time.sleep(2)
+                    st.query_params.clear()
+
+def render_reset_password_page(token):
+    st.set_page_config(page_title="Reset Your Password", layout="centered")
+    st.title("Reset Your Password")
+    with st.form("reset_password_form"):
+        password = st.text_input("New Password", type="password")
+        confirm_password = st.text_input("Confirm New Password", type="password")
+        submitted = st.form_submit_button("Reset Password")
+        if submitted:
+            if not password or password != confirm_password:
+                st.error("Passwords do not match or are empty.")
+            else:
+                if reset_password_with_token(token, password):
+                    st.session_state.view = "login"
+                    time.sleep(2)
+                    st.query_params.clear()
 
 def render_admin_view():
-    st.title(f"Admin Dashboard")
+    st.title("Admin Dashboard")
     st.markdown("Manage users and system settings.")
-
     tab1, tab2 = st.tabs(["User Management", "System Actions"])
-
     with tab1:
         st.subheader("Manage Users")
-        
         users_data = get_users_from_backend()
         if users_data:
             df = pd.DataFrame(users_data)
-            st.dataframe(df[['id', 'username', 'role', 'is_active', 'created_at']], use_container_width=True)
-
-            selected_user_id = st.selectbox("Select User to Edit", options=df['id'], format_func=lambda x: f"{df[df['id']==x]['username'].iloc[0]} (ID: {x})")
+            st.dataframe(df[['id', 'email', 'role', 'is_active', 'created_at']], use_container_width=True)
+            selected_user_id = st.selectbox("Select User to Edit", options=df['id'], format_func=lambda x: f"{df[df['id']==x]['email'].iloc[0]} (ID: {x})")
             if selected_user_id:
                 selected_user = df[df['id'] == selected_user_id].iloc[0]
                 with st.form(f"edit_user_{selected_user_id}"):
-                    st.write(f"Editing User: **{selected_user['username']}**")
+                    st.write(f"Editing User: **{selected_user['email']}**")
                     new_role = st.selectbox("Role", options=["admin", "uploader", "chatter"], index=["admin", "uploader", "chatter"].index(selected_user['role']))
                     new_is_active = st.checkbox("Is Active", value=selected_user['is_active'])
                     if st.form_submit_button("Update User"):
@@ -295,23 +355,20 @@ def render_admin_view():
 
         with st.expander("Create New User", expanded=False):
             with st.form("create_user_form"):
-                new_username = st.text_input("New Username")
-                new_password = st.text_input("New Password", type="password")
-                new_user_role = st.selectbox("Assign Role", options=["admin", "uploader", "chatter"])
+                new_email = st.text_input("New User Email")
+                new_user_role = st.selectbox("Assign Role", options=["uploader", "chatter"], index=1)
                 if st.form_submit_button("Create User"):
-                    if new_username and new_password:
-                        create_user_on_backend(new_username, new_password, new_user_role)
+                    if new_email:
+                        create_user_on_backend(new_email, new_user_role)
                         st.rerun()
                     else:
-                        st.warning("Please fill all fields.")
+                        st.warning("Please enter an email.")
     
     with tab2:
         st.subheader("System Actions")
         st.warning("This will permanently delete ALL data, files, and tables across all projects.")
         if st.button("🔴 Initiate System Wipe", type="primary"):
-            if "confirm_wipe" not in st.session_state:
-                st.session_state.confirm_wipe = True
-            
+            st.session_state.confirm_wipe = True
         if st.session_state.get("confirm_wipe"):
             st.error("ARE YOU SURE? This cannot be undone.")
             col1, col2 = st.columns(2)
@@ -320,21 +377,16 @@ def render_admin_view():
                     with st.spinner("Nuking the entire system... Please wait."):
                         nuke_system_on_backend()
                     st.session_state.confirm_wipe = False
-                    # On success, log out user to force a fresh start
                     handle_logout()
             with col2:
                 if st.button("Cancel"):
                     st.session_state.confirm_wipe = False
                     st.rerun()
 
-
 def render_uploader_view():
     st.title("Project Management")
     st.markdown("Create new projects, upload files, and get chat links.")
-
-    # Fetch projects on each run
     st.session_state.project_list = fetch_projects()
-
     col1, col2 = st.columns([1, 2])
     with col1:
         st.subheader("Your Projects")
@@ -344,82 +396,46 @@ def render_uploader_view():
                 if new_project_info:
                     st.session_state.selected_project_id = new_project_info.get("project_id")
                     st.rerun()
-
         if not st.session_state.project_list:
             st.info("You haven't created any projects yet.")
         else:
             sorted_projects = sorted(st.session_state.project_list, key=lambda x: int(x))
-            # Use a selectbox for project selection
-            st.session_state.selected_project_id = st.radio(
-                "Select a project:",
-                sorted_projects,
-                index=sorted_projects.index(st.session_state.selected_project_id) if st.session_state.selected_project_id in sorted_projects else 0,
-                format_func=lambda x: f"Project {x}"
-            )
-
+            st.session_state.selected_project_id = st.radio("Select a project:", sorted_projects, index=sorted_projects.index(st.session_state.selected_project_id) if st.session_state.selected_project_id in sorted_projects else 0, format_func=lambda x: f"Project {x}")
     with col2:
         if st.session_state.selected_project_id:
             project_id = st.session_state.selected_project_id
             st.header(f"Project {project_id}")
-
-            base_url = st.get_option("server.baseUrlPath")
-            full_url = f"{base_url}?project_id={project_id}"
-            st.success("Shareable Chat Link:")
-            st.code(full_url, language=None)
-            
+            st.success(f"Shareable Chat Link: `?project_id={project_id}`")
             st.subheader("Upload & Process Files")
-            uploaded_files = st.file_uploader(
-                "Choose files (PDF, TXT, CSV, XLSX, PNG, JPG)",
-                accept_multiple_files=True,
-                type=["pdf", "txt", "png", "jpg", "jpeg", "csv", "xlsx"],
-                key=f"uploader_{project_id}"
-            )
+            uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True, type=["pdf", "txt", "png", "jpg", "jpeg", "csv", "xlsx"], key=f"uploader_{project_id}")
             if uploaded_files:
                 if st.button("Upload and Process", type="primary"):
                     with st.status("Processing Pipeline...", expanded=True) as status:
                         status.write("1. Uploading files...")
-                        upload_res = upload_files_to_backend(project_id, uploaded_files)
-                        if not upload_res:
-                            status.update(label="Upload Failed", state="error"); st.stop()
-                        
+                        if not upload_files_to_backend(project_id, uploaded_files):
+                            status.update(label="Upload Failed", state="error"); return
                         status.write("2. Processing data...")
-                        process_res = process_data_on_backend(project_id)
-                        if not process_res:
-                            status.update(label="Processing Failed", state="error"); st.stop()
-                        
+                        if not process_data_on_backend(project_id):
+                            status.update(label="Processing Failed", state="error"); return
                         status.write("3. Indexing data...")
-                        index_res = push_to_vector_db(project_id)
-                        if not index_res:
-                            status.update(label="Indexing Failed", state="error"); st.stop()
-                            
+                        if not push_to_vector_db(project_id):
+                            status.update(label="Indexing Failed", state="error"); return
                         status.update(label="Pipeline Complete!", state="complete")
                     st.success("Files processed successfully!")
                     st.balloons()
 
 def render_chatter_view(project_id):
-    """Displays the chat interface for a specific project."""
     st.title(f"Chat with Project {project_id}")
-
-    # Load chat history
     if "messages" not in st.session_state or st.session_state.get("chatter_project_id") != project_id:
         st.session_state.messages = fetch_chat_history_from_backend(project_id)
         st.session_state.chatter_project_id = project_id
-
-    # Display messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            # Simple markdown display for now
             st.markdown(message["content"])
-
-    # Chat input
     if prompt := st.chat_input(f"Ask about Project {project_id}..."):
-        # Add user message to UI and save
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with st.chat_message("user"): st.markdown(prompt)
         save_message_to_backend(project_id, "user", prompt)
-
-        # Get assistant response
         with st.spinner("Thinking..."), st.chat_message("assistant"):
             response = get_rag_answer(project_id, prompt)
             if response and response.get("signal") == "rag_answer_success":
@@ -430,27 +446,38 @@ def render_chatter_view(project_id):
             else:
                 error_msg = "Sorry, I ran into an issue. Please try again."
                 st.markdown(error_msg)
-                st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                save_message_to_backend(project_id, "assistant", error_msg)
 
-def handle_logout():
-    """Clears session state and reruns the app to show the login page."""
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    init_session_state() # Re-initialize with defaults
-    st.rerun()
+def handle_logout(rerun=True):
+    for key in list(st.session_state.keys()): del st.session_state[key]
+    init_session_state()
+    st.query_params.clear()
+    if rerun: st.rerun()
 
 # --- Main App Logic ---
-
 def main():
-    """Main function to control the app flow."""
     init_session_state()
+    
+    # Simple Router based on query params
+    query_params = st.query_params
+    view = query_params.get("view")
+    token = query_params.get("token")
+    project_id = query_params.get("project_id")
+    
+    if view == "set_password" and token:
+        render_set_password_page(token)
+        return
+    elif view == "forgot_password":
+        render_forgot_password_page()
+        return
+    elif view == "reset_password" and token:
+        render_reset_password_page(token)
+        return
 
     if not st.session_state.logged_in:
         render_login_page()
         return
 
-    # --- Logged-in User Experience ---
+    # Logged-in experience
     st.set_page_config(page_title="Mini RAG", layout="wide")
     with st.sidebar:
         st.title("Mini RAG")
@@ -459,25 +486,23 @@ def main():
         st.divider()
 
         # Navigation based on role
+        nav_options = []
         if st.session_state.role == "admin":
-            st.session_state.current_view = st.radio("Navigation", ["Admin Dashboard", "Project Management"], key="nav_admin")
+            nav_options = ["Admin Dashboard", "Project Management"]
         elif st.session_state.role == "uploader":
-            st.session_state.current_view = "Project Management"
-        else: # chatter
+            nav_options = ["Project Management"]
+
+        if nav_options:
+            st.session_state.current_view = st.radio("Navigation", nav_options, key="nav_main")
+        else: # Chatter
             st.session_state.current_view = "Chat"
 
         if st.button("Logout", use_container_width=True):
             handle_logout()
     
-    # --- Main Panel Rendering ---
-    
-    # Check for project_id in URL for direct chat view access
-    query_params = st.query_params
-    url_project_id = query_params.get("project_id")
-    
-    if url_project_id:
-        # For any user trying to access a direct link
-        render_chatter_view(url_project_id)
+    # Main Panel Rendering
+    if project_id:
+        render_chatter_view(project_id)
     elif st.session_state.current_view == "Admin Dashboard":
         render_admin_view()
     elif st.session_state.current_view == "Project Management":
@@ -485,8 +510,7 @@ def main():
     elif st.session_state.current_view == "Chat":
         st.info("Please select a project from the 'Project Management' view or use a direct chat link.")
     else:
-        st.info("Select a view from the sidebar.")
-
+        render_login_page()
 
 if __name__ == "__main__":
     main()

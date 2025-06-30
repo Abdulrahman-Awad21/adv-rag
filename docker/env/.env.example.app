@@ -17,6 +17,18 @@ SECRET_KEY="your-32-byte-hex-secret-key-goes-here"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 ADMIN_RESET_API_KEY="SecureAdminKey"
+INITIAL_ADMIN_EMAIL="admin@example.com"
+INITIAL_ADMIN_PASSWORD="a_very_strong_password"
+
+
+
+
+# ========================= Email Config =========================
+SMTP_HOST="smtp.sendgrid.net"
+SMTP_PORT=587
+SMTP_USER="apikey"
+SMTP_PASSWORD="SG.your sendgrid_api_key_here"
+EMAILS_FROM_EMAIL="from email in sendgrid settings"
 
 
 # ========================= LLM Config =========================
