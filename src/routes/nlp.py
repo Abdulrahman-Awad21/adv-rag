@@ -1,38 +1,37 @@
-# src/routes/nlp.py
+# FILE: src/routes/nlp.py
 
-from fastapi import APIRouter, status, Request, Depends # Add Depends
+from fastapi import APIRouter, status, Request, Depends
 from fastapi.responses import JSONResponse
 from tqdm.auto import tqdm
 import logging
 
 from routes.schemes.nlp import PushRequest, SearchRequest
-from models.ProjectModel import ProjectModel
-from models.ChunkModel import ChunkModel
 from models import ResponseSignal
+from models.db_schemes import Project # Import Project
+from models.ChunkModel import ChunkModel
 from services.IndexingService import IndexingService
 from services.RAGService import RAGService
-from .project import verify_project_access # Import project access verifier
+from .dependencies import get_project_from_uuid_and_verify_access
 
 logger = logging.getLogger('uvicorn.error')
 
 nlp_router = APIRouter(
     prefix="/api/v1/nlp",
     tags=["api_v1", "nlp"],
-    dependencies=[Depends(verify_project_access)] # Secure all routes here
 )
 
-@nlp_router.post("/index/push/{project_id}")
-async def index_project(request: Request, project_id: int, push_request: PushRequest):
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-    # No need to check for project, dependency handled it
-    # Rest of the function remains the same...
+@nlp_router.post("/index/push/{project_uuid}")
+async def index_project(
+    request: Request, 
+    push_request: PushRequest,
+    project: Project = Depends(get_project_from_uuid_and_verify_access)
+):
     indexing_service = IndexingService(
         vectordb_client=request.app.vectordb_client,
         embedding_client=request.app.embedding_client
     )
     
-    collection_name = indexing_service.get_collection_name(project_id=str(project.project_id))
+    collection_name = indexing_service.get_collection_name(project_uuid=str(project.project_uuid))
     await indexing_service.create_collection(collection_name, do_reset=push_request.do_reset)
 
     chunk_model = await ChunkModel.create_instance(db_client=request.app.db_client)
@@ -57,21 +56,22 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
     if pbar: pbar.close()
     return JSONResponse(content={"signal": ResponseSignal.INSERT_INTO_VECTORDB_SUCCESS.value, "inserted_items_count": inserted_count})
 
-@nlp_router.get("/index/info/{project_id}")
-async def get_project_index_info(request: Request, project_id: int):
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-    
+@nlp_router.get("/index/info/{project_uuid}")
+async def get_project_index_info(
+    request: Request,
+    project: Project = Depends(get_project_from_uuid_and_verify_access)
+):
     indexing_service = IndexingService(vectordb_client=request.app.vectordb_client, embedding_client=request.app.embedding_client)
     collection_info = await indexing_service.get_collection_info(project=project)
     
     return JSONResponse(content={"signal": ResponseSignal.VECTORDB_COLLECTION_RETRIEVED.value, "collection_info": collection_info})
 
-@nlp_router.post("/index/search/{project_id}")
-async def search_index(request: Request, project_id: int, search_request: SearchRequest):
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-    
+@nlp_router.post("/index/search/{project_uuid}")
+async def search_index(
+    request: Request, 
+    search_request: SearchRequest,
+    project: Project = Depends(get_project_from_uuid_and_verify_access)
+):
     rag_service = RAGService(
         generation_client=request.app.generation_client, embedding_client=request.app.embedding_client,
         vectordb_client=request.app.vectordb_client, template_parser=request.app.template_parser
@@ -83,11 +83,12 @@ async def search_index(request: Request, project_id: int, search_request: Search
     
     return JSONResponse(content={"signal": ResponseSignal.VECTORDB_SEARCH_SUCCESS.value, "results": [r.model_dump() for r in results]})
 
-@nlp_router.post("/index/answer/{project_id}")
-async def answer_rag(request: Request, project_id: int, search_request: SearchRequest):
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-
+@nlp_router.post("/index/answer/{project_uuid}")
+async def answer_rag(
+    request: Request,
+    search_request: SearchRequest,
+    project: Project = Depends(get_project_from_uuid_and_verify_access)
+):
     rag_service = RAGService(
         generation_client=request.app.generation_client,
         embedding_client=request.app.embedding_client,

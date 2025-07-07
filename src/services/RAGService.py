@@ -1,3 +1,5 @@
+# FILE: src/services/RAGService.py
+
 import logging
 import re
 from typing import List, Any, Tuple, Optional
@@ -25,11 +27,15 @@ class RAGService:
         self.vectordb_client = vectordb_client
         self.template_parser = template_parser
 
-    def get_collection_name(self, project_id: str) -> str:
-        return f"collection_{self.embedding_client.embedding_size}_{project_id}".strip()
+    def get_collection_name(self, project_uuid: str) -> str:
+        """Generates a unique and SQL-safe collection name based on project UUID."""
+        # CORRECTED: Sanitize UUID for the collection name.
+        sanitized_uuid = project_uuid.replace('-', '_')
+        return f"collection_{self.embedding_client.embedding_size}_{sanitized_uuid}".strip()
 
     async def search_collection(self, project: Project, query: str, limit: int) -> List[RetrievedDocument]:
-        collection_name = self.get_collection_name(project_id=str(project.project_id))
+        # CORRECTED: Pass the project's UUID to get the correct collection name.
+        collection_name = self.get_collection_name(project_uuid=str(project.project_uuid))
         query_vector = self.embedding_client.embed_text(text=query, document_type=DocumentTypeEnum.QUERY.value)
         if not query_vector or not query_vector[0]:
             logger.warning(f"Could not generate a vector for the query: '{query}'")
@@ -138,11 +144,8 @@ class RAGService:
         intent_prompt = self.template_parser.get("rag", "intent_classification_prompt", vars={"question": query})
         llm_response = self.generation_client.generate_text(prompt=intent_prompt)
         
-        # Clean the response to get just the classification word
-        # This is robust against extra whitespace, newlines, or backticks
         intent_classification = re.sub(r'[^a-zA-Z_]', '', llm_response).strip().lower()
 
-        # Use an exact match check
         if intent_classification == 'violation':
             logger.warning(f"Violation detected for query: '{query}'. Classification: {intent_classification}")
             return "I can only answer questions related to the provided documents.", None, None
@@ -159,8 +162,8 @@ class RAGService:
         moderation_prompt = self.template_parser.get("rag", "answer_moderation_prompt", vars={"question": query, "draft_answer": draft_answer})
         final_clean_answer = self.generation_client.generate_text(prompt=moderation_prompt).strip()
 
-        # Combine the clean answer with the original thought process for frontend display
         _, draft_thinking = self._parse_llm_final_answer(draft_answer)
         final_response = f"{draft_answer.split('</think>')[0]}</think>{final_clean_answer}" if '</think>' in draft_answer else final_clean_answer
         
         return final_response, full_prompt, chat_history
+    

@@ -1,3 +1,5 @@
+# FILE: src/stores/vectordb/providers/PGVectorProvider.py
+
 from ..VectorDBInterface import VectorDBInterface
 from ..VectorDBEnums import (DistanceMethodEnums, PgVectorTableSchemeEnums, 
                              PgVectorDistanceMethodEnums, PgVectorIndexTypeEnums)
@@ -45,6 +47,7 @@ class PGVectorProvider(VectorDBInterface):
         record = None
         async with self.db_client() as session:
             async with session.begin():
+                # This query uses parameter binding, which is safe and doesn't need quoting here.
                 list_tbl = sql_text(f'SELECT * FROM pg_tables WHERE tablename = :collection_name')
                 results = await session.execute(list_tbl, {"collection_name": collection_name})
                 record = results.scalar_one_or_none()
@@ -71,7 +74,8 @@ class PGVectorProvider(VectorDBInterface):
                     WHERE tablename = :collection_name
                 ''')
 
-                count_sql = sql_text(f'SELECT COUNT(*) FROM {collection_name}')
+                # CORRECTED: Quote the collection name in the f-string.
+                count_sql = sql_text(f'SELECT COUNT(*) FROM "{collection_name}"')
 
                 table_info = await session.execute(table_info_sql, {"collection_name": collection_name})
                 record_count = await session.execute(count_sql)
@@ -96,7 +100,8 @@ class PGVectorProvider(VectorDBInterface):
             async with session.begin():
                 self.logger.info(f"Deleting collection: {collection_name}")
 
-                delete_sql = sql_text(f'DROP TABLE IF EXISTS {collection_name}')
+                # CORRECTED: Quote the collection name to handle special characters.
+                delete_sql = sql_text(f'DROP TABLE IF EXISTS "{collection_name}"')
                 await session.execute(delete_sql)
                 await session.commit()
         
@@ -114,8 +119,9 @@ class PGVectorProvider(VectorDBInterface):
             self.logger.info(f"Creating collection: {collection_name}")
             async with self.db_client() as session:
                 async with session.begin():
+                    # CORRECTED: Quote the new collection name.
                     create_sql = sql_text(
-                        f'CREATE TABLE {collection_name} ('
+                        f'CREATE TABLE "{collection_name}" ('
                             f'{PgVectorTableSchemeEnums.ID.value} bigserial PRIMARY KEY,'
                             f'{PgVectorTableSchemeEnums.TEXT.value} text, '
                             f'{PgVectorTableSchemeEnums.VECTOR.value} vector({embedding_size}), '
@@ -135,6 +141,7 @@ class PGVectorProvider(VectorDBInterface):
         index_name = self.default_index_name(collection_name)
         async with self.db_client() as session:
             async with session.begin():
+                # Parameter binding is safe.
                 check_sql = sql_text(f""" 
                                     SELECT 1 
                                     FROM pg_indexes 
@@ -153,7 +160,8 @@ class PGVectorProvider(VectorDBInterface):
         
         async with self.db_client() as session:
             async with session.begin():
-                count_sql = sql_text(f'SELECT COUNT(*) FROM {collection_name}')
+                # CORRECTED: Quote the collection name.
+                count_sql = sql_text(f'SELECT COUNT(*) FROM "{collection_name}"')
                 result = await session.execute(count_sql)
                 records_count = result.scalar_one()
 
@@ -163,8 +171,9 @@ class PGVectorProvider(VectorDBInterface):
                 self.logger.info(f"START: Creating vector index for collection: {collection_name}")
                 
                 index_name = self.default_index_name(collection_name)
+                # CORRECTED: Quote both the index and collection names.
                 create_idx_sql = sql_text(
-                                            f'CREATE INDEX {index_name} ON {collection_name} '
+                                            f'CREATE INDEX "{index_name}" ON "{collection_name}" '
                                             f'USING {index_type} ({PgVectorTableSchemeEnums.VECTOR.value} {self.distance_method})'
                                           )
 
@@ -178,7 +187,8 @@ class PGVectorProvider(VectorDBInterface):
         index_name = self.default_index_name(collection_name)
         async with self.db_client() as session:
             async with session.begin():
-                drop_sql = sql_text(f'DROP INDEX IF EXISTS {index_name}')
+                # CORRECTED: Quote the index name.
+                drop_sql = sql_text(f'DROP INDEX IF EXISTS "{index_name}"')
                 await session.execute(drop_sql)
         
         return await self.create_vector_index(collection_name=collection_name, index_type=index_type)
@@ -199,7 +209,8 @@ class PGVectorProvider(VectorDBInterface):
         
         async with self.db_client() as session:
             async with session.begin():
-                insert_sql = sql_text(f'INSERT INTO {collection_name} '
+                # CORRECTED: Quote the collection name.
+                insert_sql = sql_text(f'INSERT INTO "{collection_name}" '
                                       f'({PgVectorTableSchemeEnums.TEXT.value}, {PgVectorTableSchemeEnums.VECTOR.value}, {PgVectorTableSchemeEnums.METADATA.value}, {PgVectorTableSchemeEnums.CHUNK_ID.value}) '
                                       'VALUES (:text, :vector, :metadata, :chunk_id)'
                                       )
@@ -254,7 +265,8 @@ class PGVectorProvider(VectorDBInterface):
                             'chunk_id': _record_id
                         })
                     
-                    batch_insert_sql = sql_text(f'INSERT INTO {collection_name} '
+                    # CORRECTED: Quote the collection name.
+                    batch_insert_sql = sql_text(f'INSERT INTO "{collection_name}" '
                                     f'({PgVectorTableSchemeEnums.TEXT.value}, '
                                     f'{PgVectorTableSchemeEnums.VECTOR.value}, '
                                     f'{PgVectorTableSchemeEnums.METADATA.value}, '
@@ -273,32 +285,29 @@ class PGVectorProvider(VectorDBInterface):
         is_collection_existed = await self.is_collection_existed(collection_name=collection_name)
         if not is_collection_existed:
             self.logger.error(f"Can not search for records in a non-existed collection: {collection_name}")
-            return None # Changed from False to None for consistency
+            return None
         
-        vector_str = "[" + ",".join([ str(v) for v in vector ]) + "]" # Renamed variable for clarity
+        vector_str = "[" + ",".join([ str(v) for v in vector ]) + "]"
         async with self.db_client() as session:
             async with session.begin():
-                # ✅ UPDATED: Select metadata column as well
                 search_sql = sql_text(
                     f'SELECT '
                     f'{PgVectorTableSchemeEnums.TEXT.value} as text, '
                     f'1 - ({PgVectorTableSchemeEnums.VECTOR.value} <=> :vector) as score, '
-                    f'{PgVectorTableSchemeEnums.METADATA.value} as metadata ' # Added this line
+                    f'{PgVectorTableSchemeEnums.METADATA.value} as metadata '
                     f'FROM "{collection_name}" ' # Quoted table name for safety
                     'ORDER BY score DESC '
                     f'LIMIT {limit}'
                 )
                 
                 result = await session.execute(search_sql, {"vector": vector_str})
-                records = result.mappings().all() # Use mappings() to get dict-like rows
+                records = result.mappings().all()
 
-                # ✅ UPDATED: Populate the metadata field in RetrievedDocument
                 return [
                     RetrievedDocument(
                         text=record.text,
                         score=record.score,
-                        metadata=record.metadata # Added this line
+                        metadata=record.metadata
                     )
                     for record in records
                 ]
-

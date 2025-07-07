@@ -6,7 +6,8 @@ from pydantic import ValidationError, EmailStr
 from config.settings import get_settings, Settings
 from services.AuthService import AuthService
 from .schemes.auth import TokenData
-from models.db_schemes import User
+from models.ProjectModel import ProjectModel
+from models.db_schemes import User, Project
 
 # This tells FastAPI where to look for the token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
@@ -74,3 +75,27 @@ async def require_admin_role(current_user: User = Depends(get_current_user)) -> 
             detail="Operation not permitted. Requires 'admin' role.",
         )
     return current_user
+async def get_project_from_uuid_and_verify_access(
+    project_uuid: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service)
+) -> Project:
+    """
+    Dependency that gets a project by its UUID, verifies user access,
+    and returns the project object.
+    """
+    project_model = await ProjectModel.create_instance(request.app.db_client)
+    project = await project_model.get_project_by_uuid(project_uuid)
+    
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    has_access = await auth_service.is_project_owner(user=current_user, project=project)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Not authorized to access project {project_uuid}"
+        )
+    return project
+

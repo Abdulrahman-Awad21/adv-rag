@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 
 from config.settings import Settings
-from models.db_schemes import User
+from models.db_schemes import User,Project
 from models.ProjectModel import ProjectModel
 
 logger = logging.getLogger('uvicorn.error')
@@ -87,14 +87,12 @@ class AuthService:
             return None
     # --- END OF FIX ---
 
-    async def is_project_owner(self, user: User, project_id: int) -> bool:
-        """Checks if the given user is the owner of the project."""
-        if user.role == 'admin':
-            return True
-        
-        project_model = await ProjectModel.create_instance(self.db_client)
-        project = await project_model.get_project_or_create_one(project_id)
-        
-        if project and project.owner_id == user.id:
-            return True
-        return False
+    async def is_project_owner(self, user: User, project: Project) -> bool:
+            """Checks if the given user is the owner of the project."""
+            if user.role == 'admin':
+                return True
+            
+            if project and project.owner_id == user.id:
+                return True
+            
+            return False

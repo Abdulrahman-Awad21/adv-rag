@@ -1,3 +1,5 @@
+# FILE: frontend/app.py
+
 import streamlit as st
 import requests
 import os
@@ -11,6 +13,8 @@ import jwt
 load_dotenv()
 DEFAULT_API_BASE_URL = "http://localhost:8000/api/v1"
 API_BASE_URL = os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL)
+DEFAULT_APP_URL = "http://localhost:8501"
+APP_URL = os.getenv("APP_URL", DEFAULT_APP_URL).rstrip('/')
 
 # --- Session State Initialization ---
 def init_session_state():
@@ -20,7 +24,7 @@ def init_session_state():
         "username": None,
         "role": None,
         "current_view": "login",
-        "selected_project_id": None,
+        "selected_project_uuid": None, # Use UUID
         "messages": [],
         "project_list": []
     }
@@ -98,7 +102,8 @@ def fetch_projects():
     try:
         response = requests.get(f"{API_BASE_URL}/projects/", headers=headers)
         if response.status_code == 200:
-            return [item['project_id'] for item in response.json()]
+            # The API now returns a list of dictionaries with 'project_uuid'
+            return [item['project_uuid'] for item in response.json()]
         handle_api_error(response, "Fetch Projects")
         return []
     except requests.exceptions.RequestException as e:
@@ -117,12 +122,12 @@ def create_project_on_backend():
         st.error(f"Network error creating project: {e}")
         return None
 
-def upload_files_to_backend(project_id, files_to_upload):
+def upload_files_to_backend(project_uuid, files_to_upload):
     headers = get_auth_header()
     if not headers: return None
     api_files = [('files', (f.name, f.getvalue(), f.type)) for f in files_to_upload]
     try:
-        response = requests.post(f"{API_BASE_URL}/data/upload/{project_id}", files=api_files, headers=headers)
+        response = requests.post(f"{API_BASE_URL}/data/upload/{project_uuid}", files=api_files, headers=headers)
         if response.status_code == 200: return response.json()
         handle_api_error(response, "File Upload")
         return None
@@ -130,12 +135,12 @@ def upload_files_to_backend(project_id, files_to_upload):
         st.error(f"Network error during upload: {e}")
         return None
 
-def process_data_on_backend(project_id, chunk_size=512, overlap_size=50):
+def process_data_on_backend(project_uuid, chunk_size=512, overlap_size=50):
     headers = get_auth_header()
     if not headers: return None
     payload = {"do_reset": 1, "chunk_size": chunk_size, "overlap_size": overlap_size}
     try:
-        response = requests.post(f"{API_BASE_URL}/data/process/{project_id}", json=payload, headers=headers)
+        response = requests.post(f"{API_BASE_URL}/data/process/{project_uuid}", json=payload, headers=headers)
         if response.status_code == 200: return response.json()
         handle_api_error(response, "Process Data")
         return None
@@ -143,12 +148,12 @@ def process_data_on_backend(project_id, chunk_size=512, overlap_size=50):
         st.error(f"Network error during processing: {e}")
         return None
 
-def push_to_vector_db(project_id):
+def push_to_vector_db(project_uuid):
     headers = get_auth_header()
     if not headers: return None
     payload = {"do_reset": 1}
     try:
-        response = requests.post(f"{API_BASE_URL}/nlp/index/push/{project_id}", json=payload, headers=headers)
+        response = requests.post(f"{API_BASE_URL}/nlp/index/push/{project_uuid}", json=payload, headers=headers)
         if response.status_code == 200: return response.json()
         handle_api_error(response, "Index Push")
         return None
@@ -156,12 +161,12 @@ def push_to_vector_db(project_id):
         st.error(f"Network error during index push: {e}")
         return None
 
-def get_rag_answer(project_id, query):
+def get_rag_answer(project_uuid, query):
     headers = get_auth_header()
     if not headers: return None
     payload = {"text": query, "limit": 15}
     try:
-        response = requests.post(f"{API_BASE_URL}/nlp/index/answer/{project_id}", json=payload, headers=headers)
+        response = requests.post(f"{API_BASE_URL}/nlp/index/answer/{project_uuid}", json=payload, headers=headers)
         if response.status_code == 200: return response.json()
         handle_api_error(response, "RAG Answer")
         return None
@@ -169,11 +174,11 @@ def get_rag_answer(project_id, query):
         st.error(f"Network error getting answer: {e}")
         return None
 
-def fetch_chat_history_from_backend(project_id):
+def fetch_chat_history_from_backend(project_uuid):
     headers = get_auth_header()
-    if not headers or not project_id: return []
+    if not headers or not project_uuid: return []
     try:
-        response = requests.get(f"{API_BASE_URL}/projects/{project_id}/chat_history", headers=headers)
+        response = requests.get(f"{API_BASE_URL}/projects/{project_uuid}/chat_history", headers=headers)
         if response.status_code == 200:
             return [{"role": msg.get("role"), "content": msg.get("content")} for msg in response.json()]
         if response.status_code != 404:
@@ -183,12 +188,12 @@ def fetch_chat_history_from_backend(project_id):
         st.error(f"Network error fetching chat history: {e}")
         return []
 
-def save_message_to_backend(project_id, role, content):
+def save_message_to_backend(project_uuid, role, content):
     headers = get_auth_header()
-    if not headers or not project_id: return None
+    if not headers or not project_uuid: return None
     payload = {"role": role, "content": content}
     try:
-        response = requests.post(f"{API_BASE_URL}/projects/{project_id}/chat_history", json=payload, headers=headers)
+        response = requests.post(f"{API_BASE_URL}/projects/{project_uuid}/chat_history", json=payload, headers=headers)
         if response.status_code == 201: return response.json()
         handle_api_error(response, "Save Message")
         return None
@@ -296,7 +301,7 @@ def render_forgot_password_page():
         submitted = st.form_submit_button("Send Reset Link")
         if submitted:
             if request_password_reset(email):
-                st.session_state.view = "login" # Go back to login after request
+                st.session_state.view = "login"
                 time.sleep(3)
                 st.query_params.clear()
 
@@ -332,22 +337,91 @@ def render_reset_password_page(token):
                     time.sleep(2)
                     st.query_params.clear()
 
+def render_project_management_panel():
+    st.session_state.project_list = fetch_projects()
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.subheader("Your Projects")
+        if st.button("➕ Create New Project", use_container_width=True, type="primary"):
+            with st.spinner("Creating project..."):
+                new_project_info = create_project_on_backend()
+                if new_project_info:
+                    st.session_state.selected_project_uuid = new_project_info.get("project_uuid")
+                    st.rerun()
+        if not st.session_state.project_list:
+            st.info("No projects found. Create one to get started.")
+        else:
+            if st.session_state.selected_project_uuid not in st.session_state.project_list:
+                st.session_state.selected_project_uuid = st.session_state.project_list[0]
+            
+            # The list now contains UUIDs (strings)
+            selected_index = st.session_state.project_list.index(st.session_state.selected_project_uuid)
+            
+            st.session_state.selected_project_uuid = st.radio(
+                "Select a project:", 
+                st.session_state.project_list, 
+                index=selected_index, 
+                format_func=lambda uuid: f"Project {uuid[:8]}..." # Show truncated UUID
+            )
+
+    with col2:
+        if st.session_state.selected_project_uuid:
+            project_uuid = st.session_state.selected_project_uuid
+            st.header(f"Details for Project")
+            st.text_input("Project UUID", project_uuid, disabled=True)
+            
+            shareable_link = f"{APP_URL}/?project_uuid={project_uuid}"
+            st.success("Shareable Chat Link:")
+            st.code(shareable_link, language=None)
+            st.subheader("Upload & Process Files")
+            uploaded_files = st.file_uploader(
+                "Choose files", 
+                accept_multiple_files=True, 
+                type=["pdf", "txt", "png", "jpg", "jpeg", "csv", "xlsx"], 
+                key=f"uploader_{project_uuid}"
+            )
+            if uploaded_files:
+                if st.button("Upload and Process", type="primary", key=f"process_{project_uuid}"):
+                    with st.status("Processing Pipeline...", expanded=True) as status:
+                        status.write("1. Uploading files...")
+                        if not upload_files_to_backend(project_uuid, uploaded_files):
+                            status.update(label="Upload Failed", state="error"); return
+                        status.write("2. Processing data...")
+                        if not process_data_on_backend(project_uuid):
+                            status.update(label="Processing Failed", state="error"); return
+                        status.write("3. Indexing data...")
+                        if not push_to_vector_db(project_uuid):
+                            status.update(label="Indexing Failed", state="error"); return
+                        status.update(label="Pipeline Complete!", state="complete")
+                    st.success("Files processed successfully!")
+                    st.balloons()
+
 def render_admin_view():
     st.title("Admin Dashboard")
-    st.markdown("Manage users and system settings.")
-    tab1, tab2 = st.tabs(["User Management", "System Actions"])
+    st.markdown("Manage users, projects, and system-level actions.")
+    
+    tab1, tab2, tab3 = st.tabs(["User Management", "Project Management", "System Actions"])
+    
     with tab1:
-        st.subheader("Manage Users")
+        st.subheader("Manage All Users")
         users_data = get_users_from_backend()
         if users_data:
             df = pd.DataFrame(users_data)
             st.dataframe(df[['id', 'email', 'role', 'is_active', 'created_at']], use_container_width=True)
-            selected_user_id = st.selectbox("Select User to Edit", options=df['id'], format_func=lambda x: f"{df[df['id']==x]['email'].iloc[0]} (ID: {x})")
-            if selected_user_id:
+            
+            user_ids = df['id'].tolist()
+            user_emails = df['email'].tolist()
+            user_options = {f"{email} (ID: {uid})": uid for email, uid in zip(user_emails, user_ids)}
+            
+            selected_user_display = st.selectbox("Select User to Edit", options=user_options.keys())
+            if selected_user_display:
+                selected_user_id = user_options[selected_user_display]
                 selected_user = df[df['id'] == selected_user_id].iloc[0]
                 with st.form(f"edit_user_{selected_user_id}"):
                     st.write(f"Editing User: **{selected_user['email']}**")
-                    new_role = st.selectbox("Role", options=["admin", "uploader", "chatter"], index=["admin", "uploader", "chatter"].index(selected_user['role']))
+                    role_options = ["admin", "uploader", "chatter"]
+                    current_role_index = role_options.index(selected_user['role']) if selected_user['role'] in role_options else 2
+                    new_role = st.selectbox("Role", options=role_options, index=current_role_index)
                     new_is_active = st.checkbox("Is Active", value=selected_user['is_active'])
                     if st.form_submit_button("Update User"):
                         update_user_on_backend(selected_user_id, new_role, new_is_active)
@@ -363,8 +437,11 @@ def render_admin_view():
                         st.rerun()
                     else:
                         st.warning("Please enter an email.")
-    
+
     with tab2:
+        render_project_management_panel()
+
+    with tab3:
         st.subheader("System Actions")
         st.warning("This will permanently delete ALL data, files, and tables across all projects.")
         if st.button("🔴 Initiate System Wipe", type="primary"):
@@ -386,63 +463,31 @@ def render_admin_view():
 def render_uploader_view():
     st.title("Project Management")
     st.markdown("Create new projects, upload files, and get chat links.")
-    st.session_state.project_list = fetch_projects()
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.subheader("Your Projects")
-        if st.button("➕ Create New Project", use_container_width=True, type="primary"):
-            with st.spinner("Creating project..."):
-                new_project_info = create_project_on_backend()
-                if new_project_info:
-                    st.session_state.selected_project_id = new_project_info.get("project_id")
-                    st.rerun()
-        if not st.session_state.project_list:
-            st.info("You haven't created any projects yet.")
-        else:
-            sorted_projects = sorted(st.session_state.project_list, key=lambda x: int(x))
-            st.session_state.selected_project_id = st.radio("Select a project:", sorted_projects, index=sorted_projects.index(st.session_state.selected_project_id) if st.session_state.selected_project_id in sorted_projects else 0, format_func=lambda x: f"Project {x}")
-    with col2:
-        if st.session_state.selected_project_id:
-            project_id = st.session_state.selected_project_id
-            st.header(f"Project {project_id}")
-            st.success(f"Shareable Chat Link: `?project_id={project_id}`")
-            st.subheader("Upload & Process Files")
-            uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True, type=["pdf", "txt", "png", "jpg", "jpeg", "csv", "xlsx"], key=f"uploader_{project_id}")
-            if uploaded_files:
-                if st.button("Upload and Process", type="primary"):
-                    with st.status("Processing Pipeline...", expanded=True) as status:
-                        status.write("1. Uploading files...")
-                        if not upload_files_to_backend(project_id, uploaded_files):
-                            status.update(label="Upload Failed", state="error"); return
-                        status.write("2. Processing data...")
-                        if not process_data_on_backend(project_id):
-                            status.update(label="Processing Failed", state="error"); return
-                        status.write("3. Indexing data...")
-                        if not push_to_vector_db(project_id):
-                            status.update(label="Indexing Failed", state="error"); return
-                        status.update(label="Pipeline Complete!", state="complete")
-                    st.success("Files processed successfully!")
-                    st.balloons()
+    render_project_management_panel()
 
-def render_chatter_view(project_id):
-    st.title(f"Chat with Project {project_id}")
-    if "messages" not in st.session_state or st.session_state.get("chatter_project_id") != project_id:
-        st.session_state.messages = fetch_chat_history_from_backend(project_id)
-        st.session_state.chatter_project_id = project_id
+def render_chatter_view(project_uuid):
+    st.title(f"Chat with Project")
+    st.text_input("Project UUID", project_uuid, disabled=True)
+
+    if "messages" not in st.session_state or st.session_state.get("chatter_project_uuid") != project_uuid:
+        st.session_state.messages = fetch_chat_history_from_backend(project_uuid)
+        st.session_state.chatter_project_uuid = project_uuid
+
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-    if prompt := st.chat_input(f"Ask about Project {project_id}..."):
+
+    if prompt := st.chat_input(f"Ask about this project..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
-        save_message_to_backend(project_id, "user", prompt)
+        save_message_to_backend(project_uuid, "user", prompt)
         with st.spinner("Thinking..."), st.chat_message("assistant"):
-            response = get_rag_answer(project_id, prompt)
+            response = get_rag_answer(project_uuid, prompt)
             if response and response.get("signal") == "rag_answer_success":
                 answer = response.get("answer", "I couldn't find an answer.")
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
-                save_message_to_backend(project_id, "assistant", answer)
+                save_message_to_backend(project_uuid, "assistant", answer)
             else:
                 error_msg = "Sorry, I ran into an issue. Please try again."
                 st.markdown(error_msg)
@@ -457,11 +502,10 @@ def handle_logout(rerun=True):
 def main():
     init_session_state()
     
-    # Simple Router based on query params
     query_params = st.query_params
     view = query_params.get("view")
     token = query_params.get("token")
-    project_id = query_params.get("project_id")
+    project_uuid = query_params.get("project_uuid") # Use project_uuid
     
     if view == "set_password" and token:
         render_set_password_page(token)
@@ -477,7 +521,6 @@ def main():
         render_login_page()
         return
 
-    # Logged-in experience
     st.set_page_config(page_title="Mini RAG", layout="wide")
     with st.sidebar:
         st.title("Mini RAG")
@@ -485,30 +528,28 @@ def main():
         st.caption(f"Role: `{st.session_state.role}`")
         st.divider()
 
-        # Navigation based on role
         nav_options = []
         if st.session_state.role == "admin":
-            nav_options = ["Admin Dashboard", "Project Management"]
+            nav_options = ["Admin Dashboard"]
         elif st.session_state.role == "uploader":
             nav_options = ["Project Management"]
 
         if nav_options:
             st.session_state.current_view = st.radio("Navigation", nav_options, key="nav_main")
-        else: # Chatter
+        else:
             st.session_state.current_view = "Chat"
 
         if st.button("Logout", use_container_width=True):
             handle_logout()
     
-    # Main Panel Rendering
-    if project_id:
-        render_chatter_view(project_id)
+    if project_uuid:
+        render_chatter_view(project_uuid)
     elif st.session_state.current_view == "Admin Dashboard":
         render_admin_view()
     elif st.session_state.current_view == "Project Management":
         render_uploader_view()
     elif st.session_state.current_view == "Chat":
-        st.info("Please select a project from the 'Project Management' view or use a direct chat link.")
+        st.info("Please use a direct chat link (`?project_uuid=...`) to start a conversation.")
     else:
         render_login_page()
 

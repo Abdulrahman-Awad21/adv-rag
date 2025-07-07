@@ -1,4 +1,4 @@
-# src/routes/data.py
+# FILE: src/routes/data.py
 
 from fastapi import APIRouter, Depends, UploadFile, File, status, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -10,20 +10,18 @@ from typing import List
 from config.settings import get_settings, Settings
 from controllers.DataController import DataController
 from models import ResponseSignal, ProcessingEnum
+from models.ChunkModel import ChunkModel
 from schemas.processing import Document
 from .schemes.data import ProcessRequest
-from models.ProjectModel import ProjectModel
-from models.ChunkModel import ChunkModel
 from models.AssetModel import AssetModel
-from models.db_schemes import DataChunk, Asset, User
+from models.db_schemes import DataChunk, Asset, User, Project
 from models.enums.AssetTypeEnum import AssetTypeEnum
 from services.IngestionService import IngestionService
 from services.ProcessingService import ProcessingService
 from services.IndexingService import IndexingService
 from sqlalchemy.sql import text as sql_text
 import aiofiles
-from .dependencies import require_uploader_role # Import uploader dependency
-from .project import verify_project_access # Import project access verifier
+from .dependencies import require_uploader_role, get_project_from_uuid_and_verify_access
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -32,16 +30,12 @@ data_router = APIRouter(
     tags=["api_v1", "data"],
 )
 
-@data_router.post("/upload/{project_id}", dependencies=[Depends(verify_project_access)])
-async def upload_data(request: Request, project_id: int, files: List[UploadFile] = File(...),
+@data_router.post("/upload/{project_uuid}")
+async def upload_data(request: Request, files: List[UploadFile] = File(...),
+                      project: Project = Depends(get_project_from_uuid_and_verify_access),
                       app_settings: Settings = Depends(get_settings),
-                      current_user: User = Depends(require_uploader_role)): # Ensure user can upload
+                      current_user: User = Depends(require_uploader_role)):
     
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    # verify_project_access already confirms the project exists and user has access
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-    
-    # Rest of the function remains the same...
     data_controller = DataController()
     asset_model = await AssetModel.create_instance(db_client=request.app.db_client)
 
@@ -106,18 +100,15 @@ async def upload_data(request: Request, project_id: int, files: List[UploadFile]
 
     return JSONResponse(content={"signal": ResponseSignal.FILE_UPLOAD_SUCCESS.value, "uploaded_files_details": uploaded_files_info})
 
-@data_router.post("/process/{project_id}", dependencies=[Depends(verify_project_access)])
-async def process_data(request: Request, project_id: int, process_request: ProcessRequest,
+@data_router.post("/process/{project_uuid}")
+async def process_data(request: Request, process_request: ProcessRequest,
+                       project: Project = Depends(get_project_from_uuid_and_verify_access),
                        current_user: User = Depends(require_uploader_role)):
     
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    project_from_db = await project_model.get_project_or_create_one(project_id=project_id)
-    # No need to check for project existence, dependency handled it
-    # Rest of the function remains the same...
     asset_model = await AssetModel.create_instance(db_client=request.app.db_client)
     chunk_model = await ChunkModel.create_instance(db_client=request.app.db_client)
     
-    ingestion_service = IngestionService(project_id=str(project_from_db.project_id))
+    ingestion_service = IngestionService(project_id=str(project.project_id))
     processing_service = ProcessingService()
     indexing_service = IndexingService(
         vectordb_client=request.app.vectordb_client,
@@ -125,10 +116,11 @@ async def process_data(request: Request, project_id: int, process_request: Proce
     )
 
     if process_request.do_reset == 1:
-        collection_name = indexing_service.get_collection_name(project_id=str(project_from_db.project_id))
+        collection_name = indexing_service.get_collection_name(project_uuid=str(project.project_uuid))
         await request.app.vectordb_client.delete_collection(collection_name=collection_name)
-        await chunk_model.delete_chunks_by_project_id(project_id=project_from_db.project_id)
-        all_assets = await asset_model.get_all_project_assets(asset_project_id=project_from_db.project_id)
+        # Internal operations still use the integer project_id
+        await chunk_model.delete_chunks_by_project_id(project_id=project.project_id) 
+        all_assets = await asset_model.get_all_project_assets(asset_project_id=project.project_id)
         async with request.app.db_client() as pg_session:
             async with pg_session.begin():
                 for asset in all_assets:
@@ -138,7 +130,7 @@ async def process_data(request: Request, project_id: int, process_request: Proce
                                 logger.info(f"Resetting: Dropping PGSQL table: {table_name}")
                                 await pg_session.execute(sql_text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE;'))
 
-    target_assets = await asset_model.get_all_project_assets(asset_project_id=project_from_db.project_id, asset_type=AssetTypeEnum.FILE.value)
+    target_assets = await asset_model.get_all_project_assets(asset_project_id=project.project_id, asset_type=AssetTypeEnum.FILE.value)
     if not target_assets:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"signal": ResponseSignal.NO_FILES_ERROR.value})
 
@@ -146,7 +138,7 @@ async def process_data(request: Request, project_id: int, process_request: Proce
     total_files_processed = 0
     
     data_controller_for_path = DataController()
-    project_path = data_controller_for_path.get_project_path(str(project_from_db.project_id))
+    project_path = data_controller_for_path.get_project_path(str(project.project_id))
 
     for asset in target_assets:
         asset_id_on_disk = asset.asset_name
@@ -158,7 +150,7 @@ async def process_data(request: Request, project_id: int, process_request: Proce
             created_tables = await processing_service.etl_tabular_file_to_postgres(
                 file_path=full_file_path,
                 file_id_on_disk=asset_id_on_disk, asset_db_id=asset.asset_id, 
-                asset_project_id=project_from_db.project_id, asset_model=asset_model, 
+                asset_project_id=project.project_id, asset_model=asset_model, 
                 async_db_session_factory=request.app.db_client, sync_engine=request.app.sync_db_engine
             )
             for table_info in created_tables:
@@ -186,7 +178,7 @@ async def process_data(request: Request, project_id: int, process_request: Proce
 
         db_chunks = [DataChunk(
             chunk_text=chunk.page_content, chunk_metadata=chunk.metadata,
-            chunk_order=i + 1, chunk_project_id=project_from_db.project_id,
+            chunk_order=i + 1, chunk_project_id=project.project_id,
             chunk_asset_id=asset.asset_id) for i, chunk in enumerate(chunks_for_asset)
         ]
 
