@@ -3,6 +3,9 @@ from sqlalchemy import Column, Integer, DateTime, func, String, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy import Index
 
+# Import the association table
+from .project_access import project_access_table
+
 class User(SQLAlchemyBase):
     __tablename__ = "users"
 
@@ -18,3 +21,11 @@ class User(SQLAlchemyBase):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
 
     projects = relationship("Project", back_populates="owner")
+    
+    # New relationship to get projects a user can access
+    accessible_projects = relationship(
+        "Project",
+        secondary=project_access_table,
+        back_populates="authorized_users"
+    )
+    

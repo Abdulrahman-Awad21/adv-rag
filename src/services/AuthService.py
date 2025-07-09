@@ -70,7 +70,6 @@ class AuthService:
         except JWTError:
             return None
             
-    # --- START OF FIX: ADDING THE MISSING METHODS ---
     def create_account_setup_token(self, email: str) -> str:
         """Creates a long-lived token for initial account setup."""
         expires = timedelta(hours=24) # Link is valid for 24 hours
@@ -85,14 +84,27 @@ class AuthService:
             return payload.get("sub")
         except JWTError:
             return None
-    # --- END OF FIX ---
 
-    async def is_project_owner(self, user: User, project: Project) -> bool:
-            """Checks if the given user is the owner of the project."""
-            if user.role == 'admin':
-                return True
-            
-            if project and project.owner_id == user.id:
-                return True
-            
-            return False
+    async def has_project_access(self, user: User, project: Project) -> bool:
+        """
+        Checks if a user has access to a project.
+        Access is granted if:
+        1. The user is an 'admin'.
+        2. The user is the owner of the project.
+        3. The user has been explicitly granted access in the project_access table.
+        """
+        # Admin has access to everything.
+        if user.role == 'admin':
+            return True
+        
+        # Project owner has access.
+        if project and project.owner_id == user.id:
+            return True
+        
+        # Check if user is in the authorized users list.
+        # This check is efficient because of the `lazy="selectin"` loading strategy.
+        if project and user in project.authorized_users:
+            return True
+        
+        return False
+    

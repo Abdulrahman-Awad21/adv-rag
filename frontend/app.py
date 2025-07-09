@@ -24,7 +24,8 @@ def init_session_state():
         "username": None,
         "role": None,
         "current_view": "login",
-        "selected_project_uuid": None, # Use UUID
+        "selected_project_uuid": None,
+        "project_details": {}, # To store details of the selected project
         "messages": [],
         "project_list": []
     }
@@ -96,19 +97,77 @@ def reset_password_with_token(token, new_password):
         st.error(f"Network error: {e}")
         return False
 
+# --- Project Management API Helpers ---
+
 def fetch_projects():
     headers = get_auth_header()
     if not headers: return []
     try:
         response = requests.get(f"{API_BASE_URL}/projects/", headers=headers)
         if response.status_code == 200:
-            # The API now returns a list of dictionaries with 'project_uuid'
             return [item['project_uuid'] for item in response.json()]
         handle_api_error(response, "Fetch Projects")
         return []
     except requests.exceptions.RequestException as e:
         st.error(f"Network error fetching projects: {e}")
         return []
+
+def fetch_project_details(project_uuid):
+    headers = get_auth_header()
+    if not headers or not project_uuid: return None
+    try:
+        response = requests.get(f"{API_BASE_URL}/projects/{project_uuid}", headers=headers)
+        if response.status_code == 200:
+            st.session_state.project_details[project_uuid] = response.json()
+            return st.session_state.project_details[project_uuid]
+        handle_api_error(response, "Fetch Project Details")
+        return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error fetching project details: {e}")
+        return None
+
+def update_project_settings(project_uuid, settings_payload):
+    headers = get_auth_header()
+    if not headers or not project_uuid: return None
+    try:
+        response = requests.put(f"{API_BASE_URL}/projects/{project_uuid}/settings", json=settings_payload, headers=headers)
+        if response.status_code == 200:
+            st.session_state.project_details[project_uuid] = response.json()
+            st.toast("Settings updated!", icon="✔️")
+            return True
+        handle_api_error(response, "Update Project Settings")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error updating settings: {e}")
+        return False
+
+def grant_project_access(project_uuid, email):
+    headers = get_auth_header()
+    if not headers: return None
+    try:
+        response = requests.post(f"{API_BASE_URL}/projects/{project_uuid}/access", json={"email": email}, headers=headers)
+        if response.status_code == 200:
+            st.success(f"Access granted to {email}")
+            return True
+        handle_api_error(response, "Grant Access")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error granting access: {e}")
+        return False
+
+def revoke_project_access(project_uuid, user_id):
+    headers = get_auth_header()
+    if not headers: return None
+    try:
+        response = requests.delete(f"{API_BASE_URL}/projects/{project_uuid}/access/{user_id}", headers=headers)
+        if response.status_code == 204:
+            st.success(f"Access revoked for user ID {user_id}")
+            return True
+        handle_api_error(response, "Revoke Access")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error revoking access: {e}")
+        return False
 
 def create_project_on_backend():
     headers = get_auth_header()
@@ -166,8 +225,10 @@ def get_rag_answer(project_uuid, query):
     if not headers: return None
     payload = {"text": query, "limit": 15}
     try:
+        # This endpoint provides the core RAG answer
         response = requests.post(f"{API_BASE_URL}/nlp/index/answer/{project_uuid}", json=payload, headers=headers)
-        if response.status_code == 200: return response.json()
+        if response.status_code == 200:
+            return response.json()
         handle_api_error(response, "RAG Answer")
         return None
     except requests.exceptions.RequestException as e:
@@ -190,16 +251,15 @@ def fetch_chat_history_from_backend(project_uuid):
 
 def save_message_to_backend(project_uuid, role, content):
     headers = get_auth_header()
-    if not headers or not project_uuid: return None
+    if not headers or not project_uuid: return
     payload = {"role": role, "content": content}
     try:
-        response = requests.post(f"{API_BASE_URL}/projects/{project_uuid}/chat_history", json=payload, headers=headers)
-        if response.status_code == 201: return response.json()
-        handle_api_error(response, "Save Message")
-        return None
+        # This call will either save the message (201) or do nothing (204) if history is disabled.
+        # We don't need to check the response here.
+        requests.post(f"{API_BASE_URL}/projects/{project_uuid}/chat_history", json=payload, headers=headers)
     except requests.exceptions.RequestException as e:
-        st.error(f"Network error saving message: {e}")
-        return None
+        # Log the error but don't disrupt the user experience
+        print(f"Network error saving message: {e}")
 
 # --- Admin API Helpers ---
 def get_users_from_backend():
@@ -354,47 +414,95 @@ def render_project_management_panel():
             if st.session_state.selected_project_uuid not in st.session_state.project_list:
                 st.session_state.selected_project_uuid = st.session_state.project_list[0]
             
-            # The list now contains UUIDs (strings)
             selected_index = st.session_state.project_list.index(st.session_state.selected_project_uuid)
             
-            st.session_state.selected_project_uuid = st.radio(
+            st.session_state.selected_project_uuid = st.selectbox(
                 "Select a project:", 
                 st.session_state.project_list, 
                 index=selected_index, 
-                format_func=lambda uuid: f"Project {uuid[:8]}..." # Show truncated UUID
+                format_func=lambda uuid: f"Project {uuid[:8]}...",
+                key="project_selector"
             )
 
     with col2:
-        if st.session_state.selected_project_uuid:
-            project_uuid = st.session_state.selected_project_uuid
-            st.header(f"Details for Project")
+        project_uuid = st.session_state.selected_project_uuid
+        if project_uuid:
+            if project_uuid not in st.session_state.project_details:
+                with st.spinner("Loading project details..."):
+                    fetch_project_details(project_uuid)
+
+            details = st.session_state.project_details.get(project_uuid)
+            if not details:
+                st.error("Could not load project details. Please select another project or try again.")
+                return
+
+            st.header(f"Manage Project")
             st.text_input("Project UUID", project_uuid, disabled=True)
             
             shareable_link = f"{APP_URL}/?project_uuid={project_uuid}"
-            st.success("Shareable Chat Link:")
+            st.success("Shareable Chat Link (for authorized users):")
             st.code(shareable_link, language=None)
-            st.subheader("Upload & Process Files")
-            uploaded_files = st.file_uploader(
-                "Choose files", 
-                accept_multiple_files=True, 
-                type=["pdf", "txt", "png", "jpg", "jpeg", "csv", "xlsx"], 
-                key=f"uploader_{project_uuid}"
-            )
-            if uploaded_files:
-                if st.button("Upload and Process", type="primary", key=f"process_{project_uuid}"):
-                    with st.status("Processing Pipeline...", expanded=True) as status:
-                        status.write("1. Uploading files...")
-                        if not upload_files_to_backend(project_uuid, uploaded_files):
-                            status.update(label="Upload Failed", state="error"); return
-                        status.write("2. Processing data...")
-                        if not process_data_on_backend(project_uuid):
-                            status.update(label="Processing Failed", state="error"); return
-                        status.write("3. Indexing data...")
-                        if not push_to_vector_db(project_uuid):
-                            status.update(label="Indexing Failed", state="error"); return
-                        status.update(label="Pipeline Complete!", state="complete")
-                    st.success("Files processed successfully!")
-                    st.balloons()
+
+            tab_upload, tab_settings, tab_access = st.tabs(["Upload & Process", "Settings", "User Access"])
+
+            with tab_upload:
+                uploaded_files = st.file_uploader(
+                    "Choose files to add to this project", 
+                    accept_multiple_files=True, 
+                    type=["pdf", "txt", "png", "jpg", "jpeg", "csv", "xlsx"], 
+                    key=f"uploader_{project_uuid}"
+                )
+                if uploaded_files:
+                    if st.button("Upload and Process Files", type="primary", key=f"process_{project_uuid}"):
+                        with st.status("Processing Pipeline...", expanded=True) as status:
+                            status.write("1. Uploading files...")
+                            if not upload_files_to_backend(project_uuid, uploaded_files):
+                                status.update(label="Upload Failed", state="error"); return
+                            status.write("2. Processing data...")
+                            if not process_data_on_backend(project_uuid):
+                                status.update(label="Processing Failed", state="error"); return
+                            status.write("3. Indexing data...")
+                            if not push_to_vector_db(project_uuid):
+                                status.update(label="Indexing Failed", state="error"); return
+                            status.update(label="Pipeline Complete!", state="complete")
+                        st.success("Files processed successfully!")
+                        st.balloons()
+
+            with tab_settings:
+                st.subheader("Project Settings")
+                is_enabled = st.toggle(
+                    "Enable Chat History",
+                    value=details.get("is_chat_history_enabled", True),
+                    key=f"toggle_chat_{project_uuid}",
+                    help="If disabled, new conversations will not be saved."
+                )
+                if is_enabled != details.get("is_chat_history_enabled"):
+                    update_project_settings(project_uuid, {"is_chat_history_enabled": is_enabled})
+
+            with tab_access:
+                st.subheader("Manage User Access")
+                authorized_users = details.get("authorized_users", [])
+                
+                if authorized_users:
+                    st.write("Users with access to this project:")
+                    for user in authorized_users:
+                        col1, col2 = st.columns([3, 1])
+                        col1.text(f"- {user['email']} ({user['role']})")
+                        if col2.button("Revoke", key=f"revoke_{project_uuid}_{user['id']}", use_container_width=True):
+                            if revoke_project_access(project_uuid, user['id']):
+                                fetch_project_details(project_uuid)
+                                st.rerun()
+                else:
+                    st.info("No other users have been granted access to this project.")
+                
+                with st.form(f"grant_access_form_{project_uuid}", clear_on_submit=True):
+                    st.write("Grant access to another user:")
+                    email_to_add = st.text_input("User Email", placeholder="user@example.com")
+                    submitted = st.form_submit_button("Grant Access")
+                    if submitted and email_to_add:
+                        if grant_project_access(project_uuid, email_to_add):
+                            fetch_project_details(project_uuid)
+                            st.rerun()
 
 def render_admin_view():
     st.title("Admin Dashboard")
@@ -424,17 +532,17 @@ def render_admin_view():
                     new_role = st.selectbox("Role", options=role_options, index=current_role_index)
                     new_is_active = st.checkbox("Is Active", value=selected_user['is_active'])
                     if st.form_submit_button("Update User"):
-                        update_user_on_backend(selected_user_id, new_role, new_is_active)
-                        st.rerun()
+                        if update_user_on_backend(selected_user_id, new_role, new_is_active):
+                            st.rerun()
 
         with st.expander("Create New User", expanded=False):
-            with st.form("create_user_form"):
+            with st.form("create_user_form", clear_on_submit=True):
                 new_email = st.text_input("New User Email")
                 new_user_role = st.selectbox("Assign Role", options=["uploader", "chatter"], index=1)
                 if st.form_submit_button("Create User"):
                     if new_email:
-                        create_user_on_backend(new_email, new_user_role)
-                        st.rerun()
+                        if create_user_on_backend(new_email, new_user_role):
+                            st.rerun()
                     else:
                         st.warning("Please enter an email.")
 
@@ -462,12 +570,16 @@ def render_admin_view():
 
 def render_uploader_view():
     st.title("Project Management")
-    st.markdown("Create new projects, upload files, and get chat links.")
+    st.markdown("Create projects, upload files, manage settings, and grant user access.")
     render_project_management_panel()
 
 def render_chatter_view(project_uuid):
     st.title(f"Chat with Project")
     st.text_input("Project UUID", project_uuid, disabled=True)
+
+    if not fetch_project_details(project_uuid):
+        st.error("You do not have access to this project or it does not exist.")
+        st.stop()
 
     if "messages" not in st.session_state or st.session_state.get("chatter_project_uuid") != project_uuid:
         st.session_state.messages = fetch_chat_history_from_backend(project_uuid)
@@ -481,6 +593,7 @@ def render_chatter_view(project_uuid):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
         save_message_to_backend(project_uuid, "user", prompt)
+        
         with st.spinner("Thinking..."), st.chat_message("assistant"):
             response = get_rag_answer(project_uuid, prompt)
             if response and response.get("signal") == "rag_answer_success":
@@ -493,7 +606,10 @@ def render_chatter_view(project_uuid):
                 st.markdown(error_msg)
 
 def handle_logout(rerun=True):
-    for key in list(st.session_state.keys()): del st.session_state[key]
+    keys_to_keep = []
+    for key in list(st.session_state.keys()):
+        if key not in keys_to_keep:
+            del st.session_state[key]
     init_session_state()
     st.query_params.clear()
     if rerun: st.rerun()
@@ -505,51 +621,54 @@ def main():
     query_params = st.query_params
     view = query_params.get("view")
     token = query_params.get("token")
-    project_uuid = query_params.get("project_uuid") # Use project_uuid
+    project_uuid_from_url = query_params.get("project_uuid")
     
     if view == "set_password" and token:
-        render_set_password_page(token)
-        return
+        render_set_password_page(token); return
     elif view == "forgot_password":
-        render_forgot_password_page()
-        return
+        render_forgot_password_page(); return
     elif view == "reset_password" and token:
-        render_reset_password_page(token)
-        return
+        render_reset_password_page(); return
 
     if not st.session_state.logged_in:
-        render_login_page()
-        return
+        render_login_page(); return
 
     st.set_page_config(page_title="Mini RAG", layout="wide")
     with st.sidebar:
-        st.title("Mini RAG")
+        st.title("Adv-RAG")
         st.write(f"Welcome, **{st.session_state.username}**!")
         st.caption(f"Role: `{st.session_state.role}`")
         st.divider()
 
         nav_options = []
         if st.session_state.role == "admin":
-            nav_options = ["Admin Dashboard"]
+            nav_options = ["Admin Dashboard", "Project Management"]
         elif st.session_state.role == "uploader":
             nav_options = ["Project Management"]
 
-        if nav_options:
-            st.session_state.current_view = st.radio("Navigation", nav_options, key="nav_main")
-        else:
-            st.session_state.current_view = "Chat"
+        # Default view logic
+        default_view = "Chat" if project_uuid_from_url else (nav_options[0] if nav_options else "Chat")
+        if 'current_view' not in st.session_state or st.session_state.current_view not in nav_options + ["Chat"]:
+             st.session_state.current_view = default_view
 
+        if nav_options:
+            st.session_state.current_view = st.radio(
+                "Navigation", nav_options,
+                key="nav_main",
+                index=nav_options.index(st.session_state.current_view) if st.session_state.current_view in nav_options else 0
+            )
+        
         if st.button("Logout", use_container_width=True):
             handle_logout()
     
-    if project_uuid:
-        render_chatter_view(project_uuid)
+    if project_uuid_from_url:
+        render_chatter_view(project_uuid_from_url)
     elif st.session_state.current_view == "Admin Dashboard":
         render_admin_view()
     elif st.session_state.current_view == "Project Management":
         render_uploader_view()
     elif st.session_state.current_view == "Chat":
-        st.info("Please use a direct chat link (`?project_uuid=...`) to start a conversation.")
+        st.info("To start a conversation, please open a project-specific chat link provided by a project manager.")
     else:
         render_login_page()
 

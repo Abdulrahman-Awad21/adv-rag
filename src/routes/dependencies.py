@@ -2,19 +2,19 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import ValidationError, EmailStr
+from sqlalchemy import select
 
 from config.settings import get_settings, Settings
 from services.AuthService import AuthService
 from .schemes.auth import TokenData
 from models.ProjectModel import ProjectModel
 from models.db_schemes import User, Project
+from sqlalchemy.orm import selectinload
 
-# This tells FastAPI where to look for the token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
 
 def get_auth_service(request: Request, settings: Settings = Depends(get_settings)) -> AuthService:
     """Dependency to get an instance of the AuthService."""
-    # This was fixed in the previous step and is correct.
     return AuthService(db_client=request.app.db_client, app_settings=settings)
 
 async def get_current_user(
@@ -33,23 +33,14 @@ async def get_current_user(
     )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        
-        # The "sub" (subject) claim holds the user's email
         email: EmailStr = payload.get("sub")
         if email is None:
             raise credentials_exception
-        
-        # We can create a TokenData object for consistency if needed, but we already have the email
         token_data = TokenData(email=email)
-
     except (JWTError, ValidationError):
         raise credentials_exception
     
-    # --- THIS IS THE FIX ---
-    # Call the correct method `get_user_by_email` and pass the email from the token.
     user = await auth_service.get_user_by_email(email=token_data.email)
-    # --- END OF FIX ---
-
     if user is None or not user.is_active:
         raise credentials_exception
     return user
@@ -75,6 +66,7 @@ async def require_admin_role(current_user: User = Depends(get_current_user)) -> 
             detail="Operation not permitted. Requires 'admin' role.",
         )
     return current_user
+
 async def get_project_from_uuid_and_verify_access(
     project_uuid: str,
     request: Request,
@@ -82,20 +74,28 @@ async def get_project_from_uuid_and_verify_access(
     auth_service: AuthService = Depends(get_auth_service)
 ) -> Project:
     """
-    Dependency that gets a project by its UUID, verifies user access,
+    Dependency that gets a project by its UUID, verifies the current user has access,
     and returns the project object.
     """
-    project_model = await ProjectModel.create_instance(request.app.db_client)
-    project = await project_model.get_project_by_uuid(project_uuid)
+    # Use selectinload to eagerly load the authorized_users relationship
+    # This avoids extra database queries when checking for access.
+    async with request.app.db_client() as session:
+        stmt = (
+            select(Project)
+            .where(Project.project_uuid == project_uuid)
+            .options(selectinload(Project.authorized_users))
+        )
+        result = await session.execute(stmt)
+        project = result.scalar_one_or_none()
     
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
-    has_access = await auth_service.is_project_owner(user=current_user, project=project)
+    # Use the new centralized access control logic
+    has_access = await auth_service.has_project_access(user=current_user, project=project)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Not authorized to access project {project_uuid}"
         )
     return project
-
