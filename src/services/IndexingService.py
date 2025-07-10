@@ -1,3 +1,5 @@
+# FILE: src/services/IndexingService.py
+
 import logging
 from typing import List
 
@@ -13,9 +15,11 @@ class IndexingService:
         self.vectordb_client = vectordb_client
         self.embedding_client = embedding_client
 
-    def get_collection_name(self, project_id: str) -> str:
-        """Generates a unique collection name based on project ID and embedding size."""
-        return f"collection_{self.embedding_client.embedding_size}_{project_id}".strip()
+    def get_collection_name(self, project_uuid: str) -> str:
+        """Generates a unique and SQL-safe collection name based on project UUID."""
+        # CORRECTED: Replace hyphens with underscores to create a valid SQL identifier.
+        sanitized_uuid = project_uuid.replace('-', '_')
+        return f"collection_{self.embedding_client.embedding_size}_{sanitized_uuid}".strip()
 
     async def create_collection(self, collection_name: str, do_reset: bool = False):
         """Creates a new vector DB collection if it doesn't exist."""
@@ -30,7 +34,7 @@ class IndexingService:
         if not chunks:
             return False
 
-        collection_name = self.get_collection_name(project_id=str(project.project_id))
+        collection_name = self.get_collection_name(project_uuid=str(project.project_uuid))
         
         texts = [c.chunk_text for c in chunks]
         metadata = [c.chunk_metadata for c in chunks]
@@ -56,5 +60,6 @@ class IndexingService:
 
     async def get_collection_info(self, project: Project) -> dict:
         """Retrieves information about a project's vector collection."""
-        collection_name = self.get_collection_name(project_id=str(project.project_id))
+        collection_name = self.get_collection_name(project_uuid=str(project.project_uuid))
         return await self.vectordb_client.get_collection_info(collection_name=collection_name)
+    

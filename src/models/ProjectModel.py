@@ -2,7 +2,7 @@ from .BaseDataModel import BaseDataModel
 from .db_schemes import Project
 from sqlalchemy.future import select
 from sqlalchemy import func
-
+from typing import Optional
 class ProjectModel(BaseDataModel):
 
     def __init__(self, db_client: object):
@@ -77,4 +77,9 @@ class ProjectModel(BaseDataModel):
                 projects = result.scalars().all()     
 
                 return projects, total_pages
-            
+    async def get_project_by_uuid(self, project_uuid: str) -> Optional[Project]:
+        """Retrieves a single project by its UUID."""
+        async with self.db_client() as session:
+            stmt = select(Project).where(Project.project_uuid == project_uuid)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()

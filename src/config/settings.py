@@ -5,6 +5,7 @@ class Settings(BaseSettings):
 
     APP_NAME: str
     APP_VERSION: str
+    FRONTEND_URL: str
     OPENAI_API_KEY: str
 
     FILE_ALLOWED_TYPES: list
@@ -25,7 +26,23 @@ class Settings(BaseSettings):
     OPENAI_API_URL: str = None
     COHERE_API_KEY: str = None
     GROQ_API_KEY: str = None   
+    OPENROUTER_API_KEY: str = None
+    GOOGLE_API_KEY: str = None
     MISTRAL_API_KEY: str = None   
+
+    SECRET_KEY: str
+    ALGORITHM: str
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
+    ADMIN_RESET_API_KEY: str
+    INITIAL_ADMIN_EMAIL: str = None
+    INITIAL_ADMIN_PASSWORD: str = None
+
+    # Email settings
+    SMTP_HOST: str = None
+    SMTP_PORT: int = None
+    SMTP_USER: str = None
+    SMTP_PASSWORD: str = None
+    EMAILS_FROM_EMAIL: str = None
 
     VISION_MODEL_ID: str = None
     GENERATION_MODEL_ID_LITERAL: List[str] = None
