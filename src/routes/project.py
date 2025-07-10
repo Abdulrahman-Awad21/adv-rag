@@ -8,7 +8,7 @@ from services.ProjectService import ProjectService
 from services.UserService import UserService
 from .dependencies import get_current_user, require_uploader_role, get_project_from_uuid_and_verify_access
 from .schemes.chat import ChatMessageCreate, ChatMessageResponse
-from .schemes.project import ProjectAccessRequest, ProjectSettingsUpdate, ProjectDetailsResponse, ProjectListResponse # <-- Import new schema
+from .schemes.project import ProjectAccessRequest, ProjectSettingsUpdate, ProjectDetailsResponse, ProjectListResponse
 from .schemes.user import UserInDB
 
 project_router = APIRouter(
@@ -22,26 +22,24 @@ def get_project_service(request: Request) -> ProjectService:
     
 def get_user_service(request: Request) -> UserService:
     return UserService(
-        db_client=request.app.db_client,
-        app_settings=None,
-        email_service=None
+        db_client=request.app.db_client, app_settings=None, email_service=None
     )
 
-@project_router.post("/", response_model=ProjectListResponse, status_code=status.HTTP_201_CREATED) # Use ProjectListResponse
+@project_router.post("/", response_model=ProjectListResponse, status_code=status.HTTP_201_CREATED)
 async def create_new_project(
     service: ProjectService = Depends(get_project_service),
     current_user: User = Depends(require_uploader_role)
 ):
     new_project = await service.create_project(project_name="New Project", owner=current_user)
-    return new_project # Return the full object, Pydantic will handle it
+    return new_project
 
-@project_router.get("/", response_model=List[ProjectListResponse]) # Use the new response model
+@project_router.get("/", response_model=List[ProjectListResponse]) 
 async def list_projects(
     service: ProjectService = Depends(get_project_service),
     current_user: User = Depends(get_current_user)
 ):
     projects = await service.list_all_projects_for_user(user=current_user)
-    return projects # Return the list of objects directly
+    return projects
 
 @project_router.get("/{project_uuid}", response_model=ProjectDetailsResponse)
 async def get_project_details(
@@ -65,23 +63,40 @@ async def update_project_settings(
 async def add_project_chat_message(
     message: ChatMessageCreate,
     project: Project = Depends(get_project_from_uuid_and_verify_access),
-    service: ProjectService = Depends(get_project_service)
+    service: ProjectService = Depends(get_project_service),
+    current_user: User = Depends(get_current_user) # Get current user to log their message
 ):
-    new_message = await service.add_chat_message(project=project, role=message.role, content=message.content)
-    if new_message is None:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    # The service now always records the message with the user's ID
+    new_message = await service.add_chat_message(
+        project_id=project.project_id,
+        user=current_user,
+        role=message.role,
+        content=message.content
+    )
     return new_message
 
 @project_router.get("/{project_uuid}/chat_history", response_model=List[ChatMessageResponse])
 async def get_project_chat_messages(
-    limit: int = 100, offset: int = 0,
     project: Project = Depends(get_project_from_uuid_and_verify_access),
-    service: ProjectService = Depends(get_project_service)
+    service: ProjectService = Depends(get_project_service),
+    current_user: User = Depends(get_current_user), # Get current user to fetch their history
+    limit: int = 100,
+    offset: int = 0
 ):
-    return await service.get_chat_history(project_id=project.project_id, limit=limit, offset=offset)
+    # The logic for the visibility toggle is now here
+    if not project.is_chat_history_enabled:
+        return [] # Return an empty list if history viewing is disabled for this project
 
-# --- Access Control Routes ---
+    # Otherwise, fetch the specific user's history for this project
+    history = await service.get_chat_history(
+        project_id=project.project_id, 
+        user=current_user,
+        limit=limit,
+        offset=offset
+    )
+    return history
 
+# --- Access Control Routes (Unchanged) ---
 @project_router.post("/{project_uuid}/access", response_model=UserInDB)
 async def grant_user_access_to_project(
     access_request: ProjectAccessRequest,

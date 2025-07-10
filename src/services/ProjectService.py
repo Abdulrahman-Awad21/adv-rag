@@ -15,17 +15,10 @@ class ProjectService:
         self.db_client = db_client
 
     async def list_all_projects_for_user(self, user: User, page: int = 1, page_size: int = 1000) -> List[Project]:
-        """
-        Lists projects a user has access to.
-        - Admins see all projects.
-        - Uploaders see projects they own.
-        - Chatters see projects they own OR have been granted access to.
-        """
         async with self.db_client() as session:
             if user.role == "admin":
                 query = select(Project)
             else:
-                # Join to find projects where user is owner OR is in the access table
                 query = (
                     select(Project)
                     .outerjoin(project_access_table)
@@ -42,10 +35,7 @@ class ProjectService:
             return result.scalars().all()
 
     async def get_project_details(self, project: Project) -> Project:
-        """Refreshes and returns project details, ensuring relationships are loaded."""
         async with self.db_client() as session:
-            # Re-fetch the project with necessary relationships eagerly loaded
-            # The `selectin` on the model already helps, but this is explicit.
             result = await session.execute(
                 select(Project).where(Project.project_id == project.project_id).options(
                     selectinload(Project.authorized_users)
@@ -54,63 +44,72 @@ class ProjectService:
             return result.scalar_one_or_none()
 
     async def create_project(self, project_name: str, owner: User) -> Project:
-        """Creates a new project owned by the given user."""
         project_model = await ProjectModel.create_instance(self.db_client)
         new_project = Project(owner_id=owner.id)
         return await project_model.create_project(new_project)
         
-    async def add_chat_message(self, project: Project, role: str, content: str) -> Optional[ChatHistory]:
-        """
-        Adds a new message to a project's chat history, but only if history is enabled.
-        """
-        if not project.is_chat_history_enabled:
-            return None # Do not save if history is disabled
-
+    async def add_chat_message(self, project_id: int, user: User, role: str, content: str) -> ChatHistory:
         chat_history_model = await ChatHistoryModel.create_instance(self.db_client)
-        return await chat_history_model.add_message(project_id=project.project_id, role=role, content=content)
+        return await chat_history_model.add_message(project_id=project_id, user_id=user.id, role=role, content=content)
 
-    async def get_chat_history(self, project_id: int, limit: int = 100, offset: int = 0) -> List[ChatHistory]:
-        """Retrieves the chat history for a specific project."""
+    async def get_chat_history(self, project_id: int, user: User, limit: int = 100, offset: int = 0) -> List[ChatHistory]:
         chat_history_model = await ChatHistoryModel.create_instance(self.db_client)
-        return await chat_history_model.get_chat_history_for_project(project_id=project_id, limit=limit, offset=offset)
+        return await chat_history_model.get_chat_history_for_project_and_user(
+            project_id=project_id, user_id=user.id, limit=limit, offset=offset
+        )
 
     async def clear_chat_history(self, project_id: int) -> int:
-        """Deletes all chat history messages for a specific project."""
         chat_history_model = await ChatHistoryModel.create_instance(self.db_client)
         return await chat_history_model.delete_chat_history_for_project(project_id=project_id)
         
     async def update_project_settings(self, project: Project, settings: ProjectSettingsUpdate) -> Optional[Project]:
-        """Updates the settings for a specific project."""
         update_data = settings.model_dump(exclude_unset=True)
         if not update_data:
             return project
 
         async with self.db_client() as session:
-            stmt = update(Project).where(Project.project_id == project.project_id).values(**update_data)
+            # <-- FIX: Use the project's ID to get a "live" instance within this session.
+            project_in_session = await session.get(Project, project.project_id)
+            if not project_in_session:
+                return None # Should not happen if dependency worked, but good practice
+
+            stmt = update(Project).where(Project.project_id == project_in_session.project_id).values(**update_data)
             await session.execute(stmt)
             await session.commit()
-            await session.refresh(project)
-        return project
+            await session.refresh(project_in_session) # Refresh the live instance
+            return project_in_session
 
     async def grant_project_access(self, project: Project, target_user: User) -> bool:
-        """Grants a user access to a project."""
-        if target_user in project.authorized_users:
-            return True # Already has access
-        
         async with self.db_client() as session:
-            project.authorized_users.append(target_user)
-            session.add(project)
+            # <-- FIX: Get live, session-managed instances of both project and user.
+            project_in_session = await session.get(Project, project.project_id, options=[selectinload(Project.authorized_users)])
+            target_user_in_session = await session.get(User, target_user.id)
+
+            if not project_in_session or not target_user_in_session:
+                return False # Should not happen
+
+            if target_user_in_session in project_in_session.authorized_users:
+                return True
+            
+            project_in_session.authorized_users.append(target_user_in_session)
+            session.add(project_in_session)
             await session.commit()
         return True
         
     async def revoke_project_access(self, project: Project, target_user: User) -> bool:
-        """Revokes a user's access to a project."""
-        if target_user not in project.authorized_users:
-            return False # User doesn't have access to begin with
-
         async with self.db_client() as session:
-            project.authorized_users.remove(target_user)
-            session.add(project)
+            # <-- FIX: Get a live, session-managed instance of the project.
+            project_in_session = await session.get(Project, project.project_id, options=[selectinload(Project.authorized_users)])
+            target_user_in_session = await session.get(User, target_user.id)
+
+            if not project_in_session or not target_user_in_session:
+                return False
+
+            if target_user_in_session not in project_in_session.authorized_users:
+                return False
+
+            project_in_session.authorized_users.remove(target_user_in_session)
+            session.add(project_in_session)
             await session.commit()
         return True
     
