@@ -49,8 +49,6 @@ class RAGService:
         if not llm_output:
             return None, ""
 
-        # Use re.split to tokenize the string by <think> blocks.
-        # The parentheses in the pattern cause the delimiters (the think blocks) to be kept in the list.
         parts = re.split(r"(<think>.*?</think>)", llm_output, flags=re.DOTALL)
         
         thinking_parts = []
@@ -60,21 +58,16 @@ class RAGService:
             if not part.strip():
                 continue
             
-            # Check if the part is a think block
             if part.startswith("<think>") and part.endswith("</think>"):
-                # Extract the content from within the tags
                 match = re.search(r"<think>(.*?)</think>", part, re.DOTALL)
                 if match:
                     thinking_parts.append(match.group(1).strip())
             else:
-                # This part is a piece of the answer
                 answer_parts.append(part.strip())
 
-        # Join the aggregated parts
         final_thinking = "\n---\n".join(thinking_parts) if thinking_parts else None
         final_answer = " ".join(answer_parts).strip()
         
-        # Format for display on the frontend
         if final_thinking:
             final_thinking_markdown = f"```markdown\n{final_thinking}\n```"
         else:
@@ -84,7 +77,6 @@ class RAGService:
 
     def _extract_sql_from_llm_response(self, llm_output: str) -> str:
         if not llm_output: return ""
-        # Get the text outside of any think blocks to find the SQL
         _, potential_sql = self._parse_llm_final_answer(llm_output)
         potential_sql = potential_sql.replace('`', '').replace(';', '').strip()
         
@@ -189,15 +181,24 @@ class RAGService:
         thinking_log, draft_clean_answer, full_prompt = await self._get_synthesized_answer(query, retrieved_docs, request)
 
         # Phase 4: Moderation & Finalization
+        final_clean_answer = ""
         if draft_clean_answer.strip() == "NO_ANSWER":
             final_clean_answer = "I'm sorry, I couldn't find a relevant answer in the provided documents."
             thinking_log += "\n\n---\nNOTE: Final answer overridden because synthesis resulted in NO_ANSWER."
         else:
             moderation_prompt = self.template_parser.get("rag", "answer_moderation_prompt", vars={"question": query, "draft_answer": draft_clean_answer})
-            final_clean_answer = self.generation_client.generate_text(prompt=moderation_prompt).strip()
+            raw_moderated_output = self.generation_client.generate_text(prompt=moderation_prompt)
+
+            # ** THE FIX IS HERE: Parse the final output to separate any last-minute thinking. **
+            moderator_thinking, final_clean_answer = self._parse_llm_final_answer(raw_moderated_output)
+            
+            # Append any thoughts from the moderation step to the main thinking log
+            if moderator_thinking:
+                thinking_log += f"\n\n---\nFinal Moderation/Refinement Step:\n{moderator_thinking}"
 
         return {
             "answer": final_clean_answer,
             "thinking": thinking_log,
             "full_prompt": full_prompt
         }
+    

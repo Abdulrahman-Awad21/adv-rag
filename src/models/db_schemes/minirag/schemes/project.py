@@ -1,3 +1,5 @@
+# FILE: src/models/db_schemes/minirag/schemes/project.py
+
 from .minirag_base import SQLAlchemyBase
 from sqlalchemy import Column, Integer, DateTime, func, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
@@ -17,8 +19,7 @@ class Project(SQLAlchemyBase):
     
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     
-    is_chat_history_enabled = Column(Boolean, nullable=False, default=True)
-    # CORRECTED LINE: Use server_default to handle existing rows in the database
+    is_chat_history_enabled = Column(Boolean, nullable=False, default=True, server_default=text('true'))
     is_thinking_visible = Column(Boolean, nullable=False, server_default=text('false'))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -36,4 +37,3 @@ class Project(SQLAlchemyBase):
         back_populates="accessible_projects",
         lazy="selectin"
     )
-    
