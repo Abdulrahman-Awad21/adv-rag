@@ -96,14 +96,17 @@ async def answer_rag(
         template_parser=request.app.template_parser
     )
 
-    answer, full_prompt, chat_history = await rag_service.answer_question(
+    response_data = await rag_service.answer_question(
         project=project, query=search_request.text, request=request, limit=search_request.limit
     )
 
-    if not answer:
+    if not response_data or not response_data.get("answer"):
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value})
     
     return JSONResponse(content={
         "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
-        "answer": answer, "full_prompt": full_prompt, "chat_history": chat_history
+        "answer": response_data.get("answer"),
+        "thinking": response_data.get("thinking"),
+        "full_prompt": response_data.get("full_prompt"),
+        "chat_history": response_data.get("chat_history")
     })

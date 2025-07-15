@@ -470,14 +470,35 @@ def render_project_management_panel():
 
             with tab_settings:
                 st.subheader("Project Settings")
-                is_enabled = st.toggle(
+                
+                settings_changed = False
+                new_settings = {}
+                
+                is_history_enabled = st.toggle(
                     "Enable Chat History",
                     value=details.get("is_chat_history_enabled", True),
                     key=f"toggle_chat_{project_uuid}",
                     help="If disabled, new conversations will not be saved."
                 )
-                if is_enabled != details.get("is_chat_history_enabled"):
-                    update_project_settings(project_uuid, {"is_chat_history_enabled": is_enabled})
+                if is_history_enabled != details.get("is_chat_history_enabled"):
+                    new_settings["is_chat_history_enabled"] = is_history_enabled
+                    settings_changed = True
+                
+                is_thinking_visible = st.toggle(
+                    "Show Thinking in Chat",
+                    value=details.get("is_thinking_visible", False),
+                    key=f"toggle_thinking_{project_uuid}",
+                    help="If enabled, the model's thought process will be shown in an expandable section."
+                )
+                if is_thinking_visible != details.get("is_thinking_visible", False):
+                    new_settings["is_thinking_visible"] = is_thinking_visible
+                    settings_changed = True
+
+                if settings_changed:
+                    if update_project_settings(project_uuid, new_settings):
+                        # The update function already re-fetches details on success
+                        st.rerun()
+
 
             with tab_access:
                 st.subheader("Manage User Access")
@@ -598,6 +619,15 @@ def render_chatter_view(project_uuid):
             response = get_rag_answer(project_uuid, prompt)
             if response and response.get("signal") == "rag_answer_success":
                 answer = response.get("answer", "I couldn't find an answer.")
+                thinking = response.get("thinking")
+
+                project_details = st.session_state.project_details.get(project_uuid, {})
+                show_thinking = project_details.get("is_thinking_visible", False)
+
+                if show_thinking and thinking:
+                    with st.expander("Show thought process..."):
+                        st.markdown(thinking, unsafe_allow_html=True)
+                
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 save_message_to_backend(project_uuid, "assistant", answer)
