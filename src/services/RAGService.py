@@ -29,12 +29,10 @@ class RAGService:
 
     def get_collection_name(self, project_uuid: str) -> str:
         """Generates a unique and SQL-safe collection name based on project UUID."""
-        # CORRECTED: Sanitize UUID for the collection name.
         sanitized_uuid = project_uuid.replace('-', '_')
         return f"collection_{self.embedding_client.embedding_size}_{sanitized_uuid}".strip()
 
     async def search_collection(self, project: Project, query: str, limit: int) -> List[RetrievedDocument]:
-        # CORRECTED: Pass the project's UUID to get the correct collection name.
         collection_name = self.get_collection_name(project_uuid=str(project.project_uuid))
         query_vector = self.embedding_client.embed_text(text=query, document_type=DocumentTypeEnum.QUERY.value)
         if not query_vector or not query_vector[0]:
@@ -43,22 +41,56 @@ class RAGService:
         return await self.vectordb_client.search_by_vector(collection_name=collection_name, vector=query_vector[0], limit=limit)
 
     def _parse_llm_final_answer(self, llm_output: str) -> Tuple[Optional[str], str]:
+        """
+        Parses LLM output that may contain multiple <think> blocks.
+        Aggregates all content within <think> tags.
+        Aggregates all content outside <think> tags as the final answer.
+        """
         if not llm_output:
             return None, ""
-        match = re.search(r"<think>(.*?)</think>(.*)", llm_output, re.DOTALL)
-        if match:
-            llm_thoughts = match.group(1).strip()
-            clean_answer = match.group(2).strip()
-            return llm_thoughts, clean_answer
-        return None, llm_output.strip()
+
+        # Use re.split to tokenize the string by <think> blocks.
+        # The parentheses in the pattern cause the delimiters (the think blocks) to be kept in the list.
+        parts = re.split(r"(<think>.*?</think>)", llm_output, flags=re.DOTALL)
+        
+        thinking_parts = []
+        answer_parts = []
+
+        for part in parts:
+            if not part.strip():
+                continue
+            
+            # Check if the part is a think block
+            if part.startswith("<think>") and part.endswith("</think>"):
+                # Extract the content from within the tags
+                match = re.search(r"<think>(.*?)</think>", part, re.DOTALL)
+                if match:
+                    thinking_parts.append(match.group(1).strip())
+            else:
+                # This part is a piece of the answer
+                answer_parts.append(part.strip())
+
+        # Join the aggregated parts
+        final_thinking = "\n---\n".join(thinking_parts) if thinking_parts else None
+        final_answer = " ".join(answer_parts).strip()
+        
+        # Format for display on the frontend
+        if final_thinking:
+            final_thinking_markdown = f"```markdown\n{final_thinking}\n```"
+        else:
+            final_thinking_markdown = None
+
+        return final_thinking_markdown, final_answer
 
     def _extract_sql_from_llm_response(self, llm_output: str) -> str:
         if not llm_output: return ""
-        if "</think>" in llm_output:
-            parts = llm_output.split("</think>")
-            potential_sql = parts[-1].strip().replace('`', '').replace(';', '')
-            if potential_sql.upper().startswith("SELECT"):
-                return potential_sql
+        # Get the text outside of any think blocks to find the SQL
+        _, potential_sql = self._parse_llm_final_answer(llm_output)
+        potential_sql = potential_sql.replace('`', '').replace(';', '').strip()
+        
+        if potential_sql.upper().startswith("SELECT"):
+            return potential_sql
+            
         logger.warning(f"Could not extract a valid SQL query from LLM output: {llm_output}")
         return ""
 
@@ -96,7 +128,7 @@ class RAGService:
         rows_str = "\n".join(["| " + " | ".join(str(item) for item in row) + " |" for row in rows])
         return f"Query Results:\n{header_str}\n{separator_str}\n{rows_str}"
 
-    async def _get_synthesized_answer(self, query: str, retrieved_docs: List[RetrievedDocument], request: Request) -> Tuple[str, str, str]:
+    async def _get_synthesized_answer(self, query: str, retrieved_docs: List[RetrievedDocument], request: Request) -> Tuple[str, dict, list]:
         schema_doc = None
         text_docs = []
         for doc in retrieved_docs:
@@ -105,41 +137,39 @@ class RAGService:
             else:
                 text_docs.append(doc)
         
-        raw_answer = ""
-        full_prompt = {}
-        thinking_parts = []
+        raw_answer_from_llm = ""
+        full_prompt_sent_to_llm = {}
+        thinking_log = []
 
         if schema_doc:
             logger.info("Hybrid RAG path triggered (Schema found).")
             sql_results_text, generated_sql = await self._execute_sql_from_schema(query=query, schema_doc=schema_doc, request=request)
             text_docs_context = "\n---\n".join([doc.text for doc in text_docs]) or "No additional text information was found."
             
-            full_prompt = self.template_parser.get("rag", "hybrid_synthesis_prompt", vars={"question": query, "sql_results": sql_results_text, "text_documents": text_docs_context})
-            raw_answer = self.generation_client.generate_text(prompt=full_prompt)
+            full_prompt_sent_to_llm = self.template_parser.get("rag", "hybrid_synthesis_prompt", vars={"question": query, "sql_results": sql_results_text, "text_documents": text_docs_context})
+            raw_answer_from_llm = self.generation_client.generate_text(prompt=full_prompt_sent_to_llm)
 
-            thinking_parts.extend([
-                "Hybrid mode triggered. Most relevant schema found.",
-                f"Generated SQL:\n```sql\n{generated_sql or 'N/A'}\n```",
-                f"SQL Query Results:\n{sql_results_text}",
+            thinking_log.extend([
+                "Mode: Hybrid (SQL + Text)",
+                f"Generated SQL:\n{generated_sql or 'N/A'}",
+                f"SQL Query Results: {sql_results_text}",
                 f"Synthesizing with {len(text_docs)} additional text document(s)."
             ])
         else:
             logger.info("Standard Text RAG path triggered.")
             text_docs_context = "\n---\n".join([doc.text for doc in text_docs])
-            full_prompt = self.template_parser.get("rag", "text_synthesis_prompt", vars={"question": query, "text_documents": text_docs_context})
-            raw_answer = self.generation_client.generate_text(prompt=full_prompt)
-            thinking_parts.append(f"Standard RAG mode triggered. Synthesizing with {len(text_docs)} text document(s).")
+            full_prompt_sent_to_llm = self.template_parser.get("rag", "text_synthesis_prompt", vars={"question": query, "text_documents": text_docs_context})
+            raw_answer_from_llm = self.generation_client.generate_text(prompt=full_prompt_sent_to_llm)
+            thinking_log.append(f"Mode: Standard Text RAG. Synthesizing with {len(text_docs)} text document(s).")
         
-        llm_thoughts, clean_answer = self._parse_llm_final_answer(raw_answer)
-        if llm_thoughts:
-            thinking_parts.append(f"\nLLM's Synthesis Reasoning:\n{llm_thoughts}")
+        llm_internal_thoughts, clean_draft_answer = self._parse_llm_final_answer(raw_answer_from_llm)
+        
+        if llm_internal_thoughts:
+            thinking_log.append(f"LLM Synthesis Reasoning:\n{llm_internal_thoughts}")
             
-        comprehensive_thinking_block = f"<think>\n{' '.join(thinking_parts)}\n</think>"
-        final_answer_with_context = f"{comprehensive_thinking_block}{clean_answer}"
-        
-        return final_answer_with_context, full_prompt, None
+        return "\n".join(thinking_log), clean_draft_answer, full_prompt_sent_to_llm
 
-    async def answer_question(self, project: Project, query: str, request: Request, limit: int = 10) -> Tuple[str, Optional[dict], Any]:
+    async def answer_question(self, project: Project, query: str, request: Request, limit: int = 10) -> dict:
         # Phase 1: Intent Classification
         intent_prompt = self.template_parser.get("rag", "intent_classification_prompt", vars={"question": query})
         llm_response = self.generation_client.generate_text(prompt=intent_prompt)
@@ -148,22 +178,26 @@ class RAGService:
 
         if intent_classification == 'violation':
             logger.warning(f"Violation detected for query: '{query}'. Classification: {intent_classification}")
-            return "I can only answer questions related to the provided documents.", None, None
+            return {"answer": "I can only answer questions related to the provided documents."}
 
         # Phase 2: Retrieval
         retrieved_docs = await self.search_collection(project=project, query=query, limit=limit)
         if not retrieved_docs:
-            return "I'm sorry, I couldn't find any information related to your question.", None, None
+            return {"answer": "I'm sorry, I couldn't find any information related to your question."}
 
         # Phase 3: Synthesis
-        draft_answer, full_prompt, chat_history = await self._get_synthesized_answer(query, retrieved_docs, request)
+        thinking_log, draft_clean_answer, full_prompt = await self._get_synthesized_answer(query, retrieved_docs, request)
 
-        # Phase 4: Moderation
-        moderation_prompt = self.template_parser.get("rag", "answer_moderation_prompt", vars={"question": query, "draft_answer": draft_answer})
-        final_clean_answer = self.generation_client.generate_text(prompt=moderation_prompt).strip()
+        # Phase 4: Moderation & Finalization
+        if draft_clean_answer.strip() == "NO_ANSWER":
+            final_clean_answer = "I'm sorry, I couldn't find a relevant answer in the provided documents."
+            thinking_log += "\n\n---\nNOTE: Final answer overridden because synthesis resulted in NO_ANSWER."
+        else:
+            moderation_prompt = self.template_parser.get("rag", "answer_moderation_prompt", vars={"question": query, "draft_answer": draft_clean_answer})
+            final_clean_answer = self.generation_client.generate_text(prompt=moderation_prompt).strip()
 
-        _, draft_thinking = self._parse_llm_final_answer(draft_answer)
-        final_response = f"{draft_answer.split('</think>')[0]}</think>{final_clean_answer}" if '</think>' in draft_answer else final_clean_answer
-        
-        return final_response, full_prompt, chat_history
-    
+        return {
+            "answer": final_clean_answer,
+            "thinking": thinking_log,
+            "full_prompt": full_prompt
+        }

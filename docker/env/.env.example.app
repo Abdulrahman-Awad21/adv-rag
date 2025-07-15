@@ -45,8 +45,8 @@ GROQ_API_KEY="key___"
 # ========================= Model Config =========================
 
 VISION_MODEL_ID="pixtral-12b-latest" 
-GENERATION_MODEL_ID_LITERAL = ["qwen-qwq-32b"]
-GENERATION_MODEL_ID="qwen-qwq-32b"
+GENERATION_MODEL_ID_LITERAL = ["qwen/qwen3-32b"]
+GENERATION_MODEL_ID="qwen/qwen3-32b"
 EMBEDDING_MODEL_ID="embed-multilingual-light-v3.0"
 EMBEDDING_MODEL_SIZE=384
 
