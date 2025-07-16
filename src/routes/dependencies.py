@@ -68,12 +68,9 @@ async def get_project_from_uuid_and_verify_access(
     This is the definitive, robust way to handle this authorization check.
     """
     async with request.app.db_client() as session:
-        # Admins can access any project. We perform a simpler query for them.
         if current_user.role == "admin":
             stmt = select(Project).where(Project.project_uuid == project_uuid)
         else:
-            # For non-admins, build a query that checks for ownership OR explicit access.
-            # This query joins the projects table with the access table.
             stmt = (
                 select(Project)
                 .outerjoin(project_access_table, Project.project_id == project_access_table.c.project_id)
@@ -84,19 +81,18 @@ async def get_project_from_uuid_and_verify_access(
                         project_access_table.c.user_id == current_user.id
                     )
                 )
-                .distinct() # Use distinct to avoid duplicates if user is owner AND has explicit access
+                .distinct()
             )
         
-        # Eagerly load the authorized_users list for the response model
-        stmt = stmt.options(selectinload(Project.authorized_users))
+        # Eagerly load relationships needed by the endpoints
+        stmt = stmt.options(
+            selectinload(Project.authorized_users),
+            selectinload(Project.owner) # Eagerly load the owner for email notifications
+        )
 
         result = await session.execute(stmt)
         project = result.scalar_one_or_none()
 
-    # If the query returns no project, it means one of two things:
-    # 1. The project does not exist.
-    # 2. The project exists, but the user does not have permission.
-    # In both cases, returning 403 Forbidden is the most secure and appropriate response.
     if not project:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

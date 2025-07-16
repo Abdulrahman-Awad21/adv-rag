@@ -7,11 +7,12 @@ import logging
 
 from routes.schemes.nlp import PushRequest, SearchRequest
 from models import ResponseSignal
-from models.db_schemes import Project # Import Project
+from models.db_schemes import Project, User # Import User
 from models.ChunkModel import ChunkModel
 from services.IndexingService import IndexingService
 from services.RAGService import RAGService
-from .dependencies import get_project_from_uuid_and_verify_access
+from services.EmailService import EmailService # Import EmailService
+from .dependencies import get_project_from_uuid_and_verify_access, get_current_user # Import get_current_user
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -87,7 +88,8 @@ async def search_index(
 async def answer_rag(
     request: Request,
     search_request: SearchRequest,
-    project: Project = Depends(get_project_from_uuid_and_verify_access)
+    project: Project = Depends(get_project_from_uuid_and_verify_access),
+    current_user: User = Depends(get_current_user) # Get the user making the request
 ):
     rag_service = RAGService(
         generation_client=request.app.generation_client,
@@ -95,9 +97,17 @@ async def answer_rag(
         vectordb_client=request.app.vectordb_client,
         template_parser=request.app.template_parser
     )
+    
+    # Get the email service from the application instance
+    email_service: EmailService = request.app.email_service
 
     response_data = await rag_service.answer_question(
-        project=project, query=search_request.text, request=request, limit=search_request.limit
+        project=project, 
+        query=search_request.text, 
+        request=request, 
+        user=current_user,
+        email_service=email_service,
+        limit=search_request.limit
     )
 
     if not response_data or not response_data.get("answer"):

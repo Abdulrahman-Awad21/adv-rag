@@ -10,7 +10,8 @@ from stores.llm.LLMInterface import LLMInterface
 from stores.vectordb.VectorDBInterface import VectorDBInterface
 from stores.llm.templates.template_parser import TemplateParser
 from stores.llm.LLMEnums import DocumentTypeEnum
-from models.db_schemes import Project, RetrievedDocument
+from models.db_schemes import Project, RetrievedDocument, User
+from services.EmailService import EmailService
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -161,7 +162,19 @@ class RAGService:
             
         return "\n".join(thinking_log), clean_draft_answer, full_prompt_sent_to_llm
 
-    async def answer_question(self, project: Project, query: str, request: Request, limit: int = 10) -> dict:
+    async def answer_question(self, project: Project, query: str, request: Request, user: User, email_service: EmailService, limit: int = 10) -> dict:
+        """Processes a user's question and triggers failure notifications if needed."""
+        # Helper function to send email notification
+        async def notify_owner(failed_answer: str):
+            if project.owner and project.owner.email:
+                await email_service.send_rag_failure_notification(
+                    owner_email=project.owner.email,
+                    project_uuid=str(project.project_uuid),
+                    user_email=user.email,
+                    question=query,
+                    model_answer=failed_answer
+                )
+        
         # Phase 1: Intent Classification
         intent_prompt = self.template_parser.get("rag", "intent_classification_prompt", vars={"question": query})
         llm_response = self.generation_client.generate_text(prompt=intent_prompt)
@@ -169,13 +182,16 @@ class RAGService:
         intent_classification = re.sub(r'[^a-zA-Z_]', '', llm_response).strip().lower()
 
         if intent_classification == 'violation':
-            logger.warning(f"Violation detected for query: '{query}'. Classification: {intent_classification}")
-            return {"answer": "I can only answer questions related to the provided documents."}
+            answer = "I can only answer questions related to the provided documents."
+            await notify_owner(answer)
+            return {"answer": answer}
 
         # Phase 2: Retrieval
         retrieved_docs = await self.search_collection(project=project, query=query, limit=limit)
         if not retrieved_docs:
-            return {"answer": "I'm sorry, I couldn't find any information related to your question."}
+            answer = "I'm sorry, I couldn't find any information related to your question."
+            await notify_owner(answer)
+            return {"answer": answer}
 
         # Phase 3: Synthesis
         thinking_log, draft_clean_answer, full_prompt = await self._get_synthesized_answer(query, retrieved_docs, request)
@@ -185,14 +201,13 @@ class RAGService:
         if draft_clean_answer.strip() == "NO_ANSWER":
             final_clean_answer = "I'm sorry, I couldn't find a relevant answer in the provided documents."
             thinking_log += "\n\n---\nNOTE: Final answer overridden because synthesis resulted in NO_ANSWER."
+            await notify_owner(final_clean_answer)
         else:
             moderation_prompt = self.template_parser.get("rag", "answer_moderation_prompt", vars={"question": query, "draft_answer": draft_clean_answer})
             raw_moderated_output = self.generation_client.generate_text(prompt=moderation_prompt)
 
-            # ** THE FIX IS HERE: Parse the final output to separate any last-minute thinking. **
             moderator_thinking, final_clean_answer = self._parse_llm_final_answer(raw_moderated_output)
             
-            # Append any thoughts from the moderation step to the main thinking log
             if moderator_thinking:
                 thinking_log += f"\n\n---\nFinal Moderation/Refinement Step:\n{moderator_thinking}"
 
@@ -201,4 +216,3 @@ class RAGService:
             "thinking": thinking_log,
             "full_prompt": full_prompt
         }
-    

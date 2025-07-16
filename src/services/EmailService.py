@@ -26,9 +26,40 @@ class EmailService:
             VALIDATE_CERTS=True
         )
 
+    async def send_rag_failure_notification(self, owner_email: EmailStr, project_uuid: str, user_email: str, question: str, model_answer: str):
+        """Sends a notification to the project owner about a RAG failure."""
+        subject = f"Alert: RAG Model Failure in Project {project_uuid[:8]}"
+        chat_link = f"{self.settings.FRONTEND_URL}/?project_uuid={project_uuid}"
+        body = f"""
+        <p>Hello,</p>
+        <p>This is an automated alert regarding a query in your project that the RAG model could not answer satisfactorily.</p>
+        
+        <h3>Details:</h3>
+        <ul>
+            <li><b>Project UUID:</b> {project_uuid}</li>
+            <li><b>User:</b> {user_email}</li>
+            <li><b>User's Question:</b> "{question}"</li>
+            <li><b>Model's Response:</b> "{model_answer}"</li>
+        </ul>
+
+        <p>This may indicate that the user is asking questions outside the scope of the project's current data, or that the query was too complex.</p>
+        <p>You can access the project here: <a href="{chat_link}">{chat_link}</a></p>
+        """
+        message = MessageSchema(
+            subject=subject,
+            recipients=[owner_email],
+            body=body,
+            subtype=MessageType.html
+        )
+        fm = FastMail(self.conf)
+        try:
+            await fm.send_message(message)
+            logger.info(f"RAG failure notification sent to {owner_email} for project {project_uuid}")
+        except Exception as e:
+            logger.error(f"Failed to send RAG failure notification email to {owner_email}: {e}")
+
     async def send_account_setup_email(self, email_to: EmailStr, token: str):
         subject = "Set Up Your Account for Adv-RAG"
-        # CORRECTED: Use query parameter `view=set_password`
         setup_link = f"{self.settings.FRONTEND_URL}/?view=set_password&token={token}"
         body = f"""
         <p>Welcome to the Adv-RAG system!</p>
@@ -71,7 +102,6 @@ class EmailService:
 
     async def send_password_reset_email(self, email_to: EmailStr, token: str):
         subject = "Password Reset Request for Adv-RAG"
-        # CORRECTED: Use query parameter `view=reset_password` and remove hardcoded URL
         reset_link = f"{self.settings.FRONTEND_URL}/?view=reset_password&token={token}"
         body = f"""
         <p>You requested a password reset for your Adv-RAG account.</p>
@@ -91,3 +121,4 @@ class EmailService:
             logger.info(f"Password reset email sent to {email_to}")
         except Exception as e:
             logger.error(f"Failed to send password reset email to {email_to}: {e}")
+            
