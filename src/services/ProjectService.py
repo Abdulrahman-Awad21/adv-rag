@@ -1,3 +1,5 @@
+# FILE: src/services/ProjectService.py
+
 from typing import List, Optional
 from sqlalchemy.orm import sessionmaker, selectinload
 from sqlalchemy.future import select
@@ -68,15 +70,15 @@ class ProjectService:
             return project
 
         async with self.db_client() as session:
-            # <-- FIX: Use the project's ID to get a "live" instance within this session.
+            # <-- FIX: Get a "live" instance of the project within this session before updating.
             project_in_session = await session.get(Project, project.project_id)
             if not project_in_session:
-                return None # Should not happen if dependency worked, but good practice
+                return None 
 
             stmt = update(Project).where(Project.project_id == project_in_session.project_id).values(**update_data)
             await session.execute(stmt)
             await session.commit()
-            await session.refresh(project_in_session) # Refresh the live instance
+            await session.refresh(project_in_session) # Refresh to get the updated values
             return project_in_session
 
     async def grant_project_access(self, project: Project, target_user: User) -> bool:
@@ -86,10 +88,10 @@ class ProjectService:
             target_user_in_session = await session.get(User, target_user.id)
 
             if not project_in_session or not target_user_in_session:
-                return False # Should not happen
+                return False
 
             if target_user_in_session in project_in_session.authorized_users:
-                return True
+                return True # Already has access
             
             project_in_session.authorized_users.append(target_user_in_session)
             session.add(project_in_session)
@@ -106,10 +108,9 @@ class ProjectService:
                 return False
 
             if target_user_in_session not in project_in_session.authorized_users:
-                return False
+                return False # User didn't have access, nothing to revoke
 
             project_in_session.authorized_users.remove(target_user_in_session)
             session.add(project_in_session)
             await session.commit()
         return True
-    

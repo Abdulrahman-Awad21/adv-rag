@@ -471,8 +471,7 @@ def render_project_management_panel():
             with tab_settings:
                 st.subheader("Project Settings")
                 
-                settings_changed = False
-                new_settings = {}
+                settings_payload = {}
                 
                 is_history_enabled = st.toggle(
                     "Enable Chat History",
@@ -481,8 +480,7 @@ def render_project_management_panel():
                     help="If disabled, new conversations will not be saved."
                 )
                 if is_history_enabled != details.get("is_chat_history_enabled"):
-                    new_settings["is_chat_history_enabled"] = is_history_enabled
-                    settings_changed = True
+                    settings_payload["is_chat_history_enabled"] = is_history_enabled
                 
                 is_thinking_visible = st.toggle(
                     "Show Thinking in Chat",
@@ -490,14 +488,15 @@ def render_project_management_panel():
                     key=f"toggle_thinking_{project_uuid}",
                     help="If enabled, the model's thought process will be shown in an expandable section."
                 )
-                if is_thinking_visible != details.get("is_thinking_visible", False):
-                    new_settings["is_thinking_visible"] = is_thinking_visible
-                    settings_changed = True
+                if is_thinking_visible != details.get("is_thinking_visible"):
+                    settings_payload["is_thinking_visible"] = is_thinking_visible
 
-                if settings_changed:
-                    if update_project_settings(project_uuid, new_settings):
-                        # The update function already re-fetches details on success
-                        st.rerun()
+                if st.button("Save Settings", key=f"save_settings_{project_uuid}"):
+                    if settings_payload:
+                        if update_project_settings(project_uuid, settings_payload):
+                            st.rerun()
+                    else:
+                        st.toast("No changes to save.", icon="🤷")
 
 
             with tab_access:

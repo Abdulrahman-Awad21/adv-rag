@@ -1,20 +1,21 @@
+# FILE: src/routes/dependencies.py
+
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import ValidationError, EmailStr
-from sqlalchemy import select
+from sqlalchemy import select, or_
+from sqlalchemy.orm import selectinload
 
 from config.settings import get_settings, Settings
 from services.AuthService import AuthService
 from .schemes.auth import TokenData
-from models.ProjectModel import ProjectModel
 from models.db_schemes import User, Project
-from sqlalchemy.orm import selectinload
+from models.db_schemes.minirag.schemes.project_access import project_access_table
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
 
 def get_auth_service(request: Request, settings: Settings = Depends(get_settings)) -> AuthService:
-    """Dependency to get an instance of the AuthService."""
     return AuthService(db_client=request.app.db_client, app_settings=settings)
 
 async def get_current_user(
@@ -22,10 +23,6 @@ async def get_current_user(
     settings: Settings = Depends(get_settings),
     auth_service: AuthService = Depends(get_auth_service)
 ) -> User:
-    """
-    Decodes the JWT token, validates it, and returns the corresponding user from the database.
-    This is the primary dependency for requiring a user to be logged in.
-    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -46,9 +43,6 @@ async def get_current_user(
     return user
 
 async def require_uploader_role(current_user: User = Depends(get_current_user)) -> User:
-    """
-    Dependency that requires the current user to have 'uploader' or 'admin' role.
-    """
     if current_user.role not in ["uploader", "admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -57,9 +51,6 @@ async def require_uploader_role(current_user: User = Depends(get_current_user)) 
     return current_user
 
 async def require_admin_role(current_user: User = Depends(get_current_user)) -> User:
-    """
-    Dependency that requires the current user to have the 'admin' role.
-    """
     if current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -71,31 +62,41 @@ async def get_project_from_uuid_and_verify_access(
     project_uuid: str,
     request: Request,
     current_user: User = Depends(get_current_user),
-    auth_service: AuthService = Depends(get_auth_service)
 ) -> Project:
     """
-    Dependency that gets a project by its UUID, verifies the current user has access,
-    and returns the project object.
+    Gets a project by UUID and verifies access in a single, atomic database query.
+    This is the definitive, robust way to handle this authorization check.
     """
-    # Use selectinload to eagerly load the authorized_users relationship
-    # This avoids extra database queries when checking for access.
     async with request.app.db_client() as session:
-        stmt = (
-            select(Project)
-            .where(Project.project_uuid == project_uuid)
-            .options(selectinload(Project.authorized_users))
+        if current_user.role == "admin":
+            stmt = select(Project).where(Project.project_uuid == project_uuid)
+        else:
+            stmt = (
+                select(Project)
+                .outerjoin(project_access_table, Project.project_id == project_access_table.c.project_id)
+                .where(
+                    Project.project_uuid == project_uuid,
+                    or_(
+                        Project.owner_id == current_user.id,
+                        project_access_table.c.user_id == current_user.id
+                    )
+                )
+                .distinct()
+            )
+        
+        # Eagerly load relationships needed by the endpoints
+        stmt = stmt.options(
+            selectinload(Project.authorized_users),
+            selectinload(Project.owner) # Eagerly load the owner for email notifications
         )
+
         result = await session.execute(stmt)
         project = result.scalar_one_or_none()
-    
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
-    # Use the new centralized access control logic
-    has_access = await auth_service.has_project_access(user=current_user, project=project)
-    if not has_access:
+    if not project:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Not authorized to access project {project_uuid}"
         )
+        
     return project

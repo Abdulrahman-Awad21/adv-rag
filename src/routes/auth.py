@@ -1,3 +1,5 @@
+# FILE: src/routes/auth.py
+
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
@@ -67,9 +69,8 @@ async def request_password_reset(
     if user:
         # Create a password reset token
         token = auth_service.create_password_reset_token(email=user.email)
-        # The frontend URL needs to be configured or passed in
-        frontend_url = "http://localhost:8501" # Replace with a configurable value later
-        await email_service.send_password_reset_email(user.email, token, frontend_url)
+        # CORRECTED: The service now handles the URL internally, so we don't pass it here.
+        await email_service.send_password_reset_email(user.email, token)
     return {"message": "If an account with that email exists, a password reset link has been sent."}
 
 @auth_router.post("/reset-password", status_code=status.HTTP_200_OK)
