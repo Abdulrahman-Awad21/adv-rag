@@ -1,5 +1,6 @@
-from .minirag_base import SQLAlchemyBase
-from .project_access import project_access_table
+
+from .illa_rag_base import SQLAlchemyBase
+from .project_access import ProjectAccess 
 from .user import User
 from .project import Project
 from .asset import Asset

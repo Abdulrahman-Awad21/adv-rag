@@ -32,12 +32,14 @@ class PGVectorProvider(VectorDBInterface):
 
 
     async def connect(self):
-        async with self.db_client() as session:
-            async with session.begin():
-                await session.execute(sql_text(
-                    "CREATE EXTENSION IF NOT EXISTS vector"
-                ))
-                await session.commit()
+        """
+        This method is now a no-op. The database connection pool is managed
+        by the FastAPI lifespan. The pgvector extension is pre-installed
+        in the official Docker image, so there is no need to run
+        CREATE EXTENSION on every application startup.
+        """
+        self.logger.info("PGVectorProvider connect call is a no-op; connection is managed by application lifespan.")
+        pass
 
     async def disconnect(self):
         pass
@@ -47,7 +49,6 @@ class PGVectorProvider(VectorDBInterface):
         record = None
         async with self.db_client() as session:
             async with session.begin():
-                # This query uses parameter binding, which is safe and doesn't need quoting here.
                 list_tbl = sql_text(f'SELECT * FROM pg_tables WHERE tablename = :collection_name')
                 results = await session.execute(list_tbl, {"collection_name": collection_name})
                 record = results.scalar_one_or_none()
@@ -74,7 +75,6 @@ class PGVectorProvider(VectorDBInterface):
                     WHERE tablename = :collection_name
                 ''')
 
-                # CORRECTED: Quote the collection name in the f-string.
                 count_sql = sql_text(f'SELECT COUNT(*) FROM "{collection_name}"')
 
                 table_info = await session.execute(table_info_sql, {"collection_name": collection_name})
@@ -99,11 +99,8 @@ class PGVectorProvider(VectorDBInterface):
         async with self.db_client() as session:
             async with session.begin():
                 self.logger.info(f"Deleting collection: {collection_name}")
-
-                # CORRECTED: Quote the collection name to handle special characters.
                 delete_sql = sql_text(f'DROP TABLE IF EXISTS "{collection_name}"')
                 await session.execute(delete_sql)
-                await session.commit()
         
         return True
 
@@ -112,14 +109,13 @@ class PGVectorProvider(VectorDBInterface):
                                       do_reset: bool = False):
         
         if do_reset:
-            _ = await self.delete_collection(collection_name=collection_name)
+            await self.delete_collection(collection_name=collection_name)
 
         is_collection_existed = await self.is_collection_existed(collection_name=collection_name)
         if not is_collection_existed:
             self.logger.info(f"Creating collection: {collection_name}")
             async with self.db_client() as session:
                 async with session.begin():
-                    # CORRECTED: Quote the new collection name.
                     create_sql = sql_text(
                         f'CREATE TABLE "{collection_name}" ('
                             f'{PgVectorTableSchemeEnums.ID.value} bigserial PRIMARY KEY,'
@@ -131,7 +127,6 @@ class PGVectorProvider(VectorDBInterface):
                         ')'
                     )
                     await session.execute(create_sql)
-                    await session.commit()
             
             return True
 
@@ -141,7 +136,6 @@ class PGVectorProvider(VectorDBInterface):
         index_name = self.default_index_name(collection_name)
         async with self.db_client() as session:
             async with session.begin():
-                # Parameter binding is safe.
                 check_sql = sql_text(f""" 
                                     SELECT 1 
                                     FROM pg_indexes 
@@ -160,7 +154,6 @@ class PGVectorProvider(VectorDBInterface):
         
         async with self.db_client() as session:
             async with session.begin():
-                # CORRECTED: Quote the collection name.
                 count_sql = sql_text(f'SELECT COUNT(*) FROM "{collection_name}"')
                 result = await session.execute(count_sql)
                 records_count = result.scalar_one()
@@ -171,7 +164,6 @@ class PGVectorProvider(VectorDBInterface):
                 self.logger.info(f"START: Creating vector index for collection: {collection_name}")
                 
                 index_name = self.default_index_name(collection_name)
-                # CORRECTED: Quote both the index and collection names.
                 create_idx_sql = sql_text(
                                             f'CREATE INDEX "{index_name}" ON "{collection_name}" '
                                             f'USING {index_type} ({PgVectorTableSchemeEnums.VECTOR.value} {self.distance_method})'
@@ -187,7 +179,6 @@ class PGVectorProvider(VectorDBInterface):
         index_name = self.default_index_name(collection_name)
         async with self.db_client() as session:
             async with session.begin():
-                # CORRECTED: Quote the index name.
                 drop_sql = sql_text(f'DROP INDEX IF EXISTS "{index_name}"')
                 await session.execute(drop_sql)
         
@@ -209,7 +200,6 @@ class PGVectorProvider(VectorDBInterface):
         
         async with self.db_client() as session:
             async with session.begin():
-                # CORRECTED: Quote the collection name.
                 insert_sql = sql_text(f'INSERT INTO "{collection_name}" '
                                       f'({PgVectorTableSchemeEnums.TEXT.value}, {PgVectorTableSchemeEnums.VECTOR.value}, {PgVectorTableSchemeEnums.METADATA.value}, {PgVectorTableSchemeEnums.CHUNK_ID.value}) '
                                       'VALUES (:text, :vector, :metadata, :chunk_id)'
@@ -222,7 +212,6 @@ class PGVectorProvider(VectorDBInterface):
                     'metadata': metadata_json,
                     'chunk_id': record_id
                 })
-                await session.commit()
 
                 await self.create_vector_index(collection_name=collection_name)
         
@@ -265,7 +254,6 @@ class PGVectorProvider(VectorDBInterface):
                             'chunk_id': _record_id
                         })
                     
-                    # CORRECTED: Quote the collection name.
                     batch_insert_sql = sql_text(f'INSERT INTO "{collection_name}" '
                                     f'({PgVectorTableSchemeEnums.TEXT.value}, '
                                     f'{PgVectorTableSchemeEnums.VECTOR.value}, '
@@ -295,7 +283,7 @@ class PGVectorProvider(VectorDBInterface):
                     f'{PgVectorTableSchemeEnums.TEXT.value} as text, '
                     f'1 - ({PgVectorTableSchemeEnums.VECTOR.value} <=> :vector) as score, '
                     f'{PgVectorTableSchemeEnums.METADATA.value} as metadata '
-                    f'FROM "{collection_name}" ' # Quoted table name for safety
+                    f'FROM "{collection_name}" '
                     'ORDER BY score DESC '
                     f'LIMIT {limit}'
                 )

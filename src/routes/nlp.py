@@ -13,6 +13,7 @@ from services.IndexingService import IndexingService
 from services.RAGService import RAGService
 from services.EmailService import EmailService # Import EmailService
 from .dependencies import get_project_from_uuid_and_verify_access, get_current_user # Import get_current_user
+from services.ProjectService import ProjectService # Import ProjectService
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -20,6 +21,10 @@ nlp_router = APIRouter(
     prefix="/api/v1/nlp",
     tags=["api_v1", "nlp"],
 )
+
+def get_project_service(request: Request) -> ProjectService:
+    return ProjectService(db_client=request.app.db_client)
+
 
 @nlp_router.post("/index/push/{project_uuid}")
 async def index_project(
@@ -89,7 +94,8 @@ async def answer_rag(
     request: Request,
     search_request: SearchRequest,
     project: Project = Depends(get_project_from_uuid_and_verify_access),
-    current_user: User = Depends(get_current_user) # Get the user making the request
+    current_user: User = Depends(get_current_user),
+    project_service: ProjectService = Depends(get_project_service)
 ):
     rag_service = RAGService(
         generation_client=request.app.generation_client,
@@ -97,9 +103,15 @@ async def answer_rag(
         vectordb_client=request.app.vectordb_client,
         template_parser=request.app.template_parser
     )
-    
-    # Get the email service from the application instance
     email_service: EmailService = request.app.email_service
+    
+    # ALWAYS save the user's message to the database for audit and review.
+    user_message_db = await project_service.add_chat_message(
+        project_id=project.project_id,
+        user=current_user,
+        role="user",
+        content=search_request.text
+    )
 
     response_data = await rag_service.answer_question(
         project=project, 
@@ -107,16 +119,25 @@ async def answer_rag(
         request=request, 
         user=current_user,
         email_service=email_service,
-        limit=search_request.limit
+        limit=search_request.limit,
+        user_message_id=user_message_db.id if user_message_db else None
     )
 
     if not response_data or not response_data.get("answer"):
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value})
     
+    # ALWAYS save the assistant's response to the database.
+    await project_service.add_chat_message(
+        project_id=project.project_id,
+        user=current_user,
+        role="assistant",
+        content=response_data.get("answer"),
+        thinking=response_data.get("thinking")
+    )
+
     return JSONResponse(content={
         "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
         "answer": response_data.get("answer"),
         "thinking": response_data.get("thinking"),
-        "full_prompt": response_data.get("full_prompt"),
-        "chat_history": response_data.get("chat_history")
+        "full_prompt": response_data.get("full_prompt")
     })

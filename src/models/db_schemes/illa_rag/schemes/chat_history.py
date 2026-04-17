@@ -1,4 +1,4 @@
-from .minirag_base import SQLAlchemyBase
+from .illa_rag_base import SQLAlchemyBase
 from sqlalchemy import Column, Integer, DateTime, func, String, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -18,7 +18,7 @@ class ChatHistory(SQLAlchemyBase):
     role = Column(String(50), nullable=False)
     content = Column(Text, nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
+    thinking = Column(Text, nullable=True) # To store the RAG thought process
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
 

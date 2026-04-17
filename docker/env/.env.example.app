@@ -1,15 +1,15 @@
-APP_NAME="mini-RAG"
+APP_NAME="ILLA-RAG"
 APP_VERSION="0.1"
 
-FILE_ALLOWED_TYPES=["text/plain", "application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp"]
-FILE_MAX_SIZE=10
+FILE_ALLOWED_TYPES=["text/plain", "application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+FILE_MAX_SIZE=10 #10 MB
 FILE_DEFAULT_CHUNK_SIZE=512000 # 512KB
 
 POSTGRES_USERNAME="postgres"
 POSTGRES_PASSWORD="postgres_password"
 POSTGRES_HOST="pgvector"
 POSTGRES_PORT=5432
-POSTGRES_MAIN_DATABASE="minirag"
+POSTGRES_MAIN_DATABASE="ILLA-RAG"
 
 
 # ========================= Security Config =========================

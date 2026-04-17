@@ -2,7 +2,7 @@
 
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from pydantic import EmailStr
-from typing import List
+from typing import List, Optional
 from config.settings import Settings
 import logging
 
@@ -26,17 +26,23 @@ class EmailService:
             VALIDATE_CERTS=True
         )
 
-    async def send_rag_failure_notification(self, owner_email: EmailStr, project_uuid: str, user_email: str, question: str, model_answer: str):
+    async def send_rag_failure_notification(self, owner_email: EmailStr, project_uuid: str, user_email: str, question: str, model_answer: str, user_message_id: Optional[int] = None):
+
         """Sends a notification to the project owner about a RAG failure."""
+
         subject = f"Alert: RAG Model Failure in Project {project_uuid[:8]}"
         chat_link = f"{self.settings.FRONTEND_URL}/?project_uuid={project_uuid}"
+        message_id_html = ""
+        if user_message_id:
+            message_id_html = f"<li><b>Message ID:</b> {user_message_id}</li>"
         body = f"""
         <p>Hello,</p>
         <p>This is an automated alert regarding a query in your project that the RAG model could not answer satisfactorily.</p>
         
         <h3>Details:</h3>
         <ul>
-            <li><b>Project UUID:</b> {project_uuid}</li>
+            <li><b>Project UUID:</b> {project_uuid}</li> 
+            {message_id_html}
             <li><b>User:</b> {user_email}</li>
             <li><b>User's Question:</b> "{question}"</li>
             <li><b>Model's Response:</b> "{model_answer}"</li>
@@ -59,10 +65,10 @@ class EmailService:
             logger.error(f"Failed to send RAG failure notification email to {owner_email}: {e}")
 
     async def send_account_setup_email(self, email_to: EmailStr, token: str):
-        subject = "Set Up Your Account for Adv-RAG"
+        subject = "Set Up Your Account for ILLA-RAG"
         setup_link = f"{self.settings.FRONTEND_URL}/?view=set_password&token={token}"
         body = f"""
-        <p>Welcome to the Adv-RAG system!</p>
+        <p>Welcome to the ILLA-RAG system!</p>
         <p>An account has been created for you. Please click the link below to set your password. This link is valid for 24 hours.</p>
         <p><a href="{setup_link}">{setup_link}</a></p>
         <p>If you did not request this, please ignore this email.</p>
@@ -81,9 +87,9 @@ class EmailService:
             logger.error(f"Failed to send account setup email to {email_to}: {e}")
 
     async def send_new_account_email(self, email_to: EmailStr, temporary_password: str):
-        subject = "Your New Account for Adv-RAG"
+        subject = "Your New Account for ILLA-RAG"
         body = f"""
-        <p>Welcome to the Adv-RAG system!</p>
+        <p>Welcome to the ILLA-RAG system!</p>
         <p>An account has been created for you. Please log in using the following temporary password and change it immediately.</p>
         <p><b>Temporary Password:</b> {temporary_password}</p>
         """
@@ -101,10 +107,10 @@ class EmailService:
             logger.error(f"Failed to send new account email to {email_to}: {e}")
 
     async def send_password_reset_email(self, email_to: EmailStr, token: str):
-        subject = "Password Reset Request for Adv-RAG"
+        subject = "Password Reset Request for ILLA-RAG"
         reset_link = f"{self.settings.FRONTEND_URL}/?view=reset_password&token={token}"
         body = f"""
-        <p>You requested a password reset for your Adv-RAG account.</p>
+        <p>You requested a password reset for your ILLA-RAG account.</p>
         <p>Please click the link below to set a new password. This link is valid for 15 minutes.</p>
         <p><a href="{reset_link}">{reset_link}</a></p>
         <p>If you did not request this, please ignore this email.</p>

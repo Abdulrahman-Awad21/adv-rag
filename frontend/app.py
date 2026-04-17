@@ -8,13 +8,12 @@ import time
 import pandas as pd
 from typing import List, Dict, Any, Optional
 import jwt
+from datetime import datetime
 
 # --- Configuration ---
 load_dotenv()
-DEFAULT_API_BASE_URL = "http://localhost:8000/api/v1"
-API_BASE_URL = os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL)
-DEFAULT_APP_URL = "http://localhost:8501"
-APP_URL = os.getenv("APP_URL", DEFAULT_APP_URL).rstrip('/')
+API_BASE_URL = os.getenv("API_BASE_URL")
+APP_URL = os.getenv("APP_URL")
 
 # --- Session State Initialization ---
 def init_session_state():
@@ -223,9 +222,8 @@ def push_to_vector_db(project_uuid):
 def get_rag_answer(project_uuid, query):
     headers = get_auth_header()
     if not headers: return None
-    payload = {"text": query, "limit": 15}
+    payload = {"text": query, "limit": 3}
     try:
-        # This endpoint provides the core RAG answer
         response = requests.post(f"{API_BASE_URL}/nlp/index/answer/{project_uuid}", json=payload, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -241,7 +239,7 @@ def fetch_chat_history_from_backend(project_uuid):
     try:
         response = requests.get(f"{API_BASE_URL}/projects/{project_uuid}/chat_history", headers=headers)
         if response.status_code == 200:
-            return [{"role": msg.get("role"), "content": msg.get("content")} for msg in response.json()]
+            return response.json()
         if response.status_code != 404:
             handle_api_error(response, "Fetch Chat History")
         return []
@@ -249,17 +247,30 @@ def fetch_chat_history_from_backend(project_uuid):
         st.error(f"Network error fetching chat history: {e}")
         return []
 
-def save_message_to_backend(project_uuid, role, content):
+def fetch_all_chat_history_from_backend(project_uuid: str, filters: dict) -> List[Dict]:
+    """Fetches all chat history for a project, with optional filters."""
     headers = get_auth_header()
-    if not headers or not project_uuid: return
-    payload = {"role": role, "content": content}
+    if not headers or not project_uuid:
+        return []
+    
+    params = {}
+    for key, value in filters.items():
+        if value is not None:
+            if isinstance(value, datetime):
+                params[key] = value.isoformat()
+            elif value:
+                params[key] = value
+
     try:
-        # This call will either save the message (201) or do nothing (204) if history is disabled.
-        # We don't need to check the response here.
-        requests.post(f"{API_BASE_URL}/projects/{project_uuid}/chat_history", json=payload, headers=headers)
+        response = requests.get(f"{API_BASE_URL}/projects/{project_uuid}/all_chat_history", headers=headers, params=params)
+        if response.status_code == 200:
+            return response.json()
+        if response.status_code != 403:
+             handle_api_error(response, "Fetch All Chat History")
+        return []
     except requests.exceptions.RequestException as e:
-        # Log the error but don't disrupt the user experience
-        print(f"Network error saving message: {e}")
+        st.error(f"Network error fetching all chat history: {e}")
+        return []
 
 # --- Admin API Helpers ---
 def get_users_from_backend():
@@ -321,8 +332,8 @@ def nuke_system_on_backend():
 # --- UI Rendering Functions ---
 
 def render_login_page():
-    st.set_page_config(page_title="Login - Mini RAG", layout="centered")
-    st.title("Welcome to Adv-RAG")
+    st.set_page_config(page_title="Login - ILLA RAG", layout="centered")
+    st.title("Welcome to ILLA RAG")
     
     with st.form("login_form"):
         email = st.text_input("Email")
@@ -442,8 +453,10 @@ def render_project_management_panel():
             shareable_link = f"{APP_URL}/?project_uuid={project_uuid}"
             st.success("Shareable Chat Link (for authorized users):")
             st.code(shareable_link, language=None)
-
-            tab_upload, tab_settings, tab_access = st.tabs(["Upload & Process", "Settings", "User Access"])
+            
+            tab_upload, tab_settings, tab_access, tab_history = st.tabs([
+                "Upload & Process", "Settings", "User Access", "Chat History"
+            ])
 
             with tab_upload:
                 uploaded_files = st.file_uploader(
@@ -498,7 +511,6 @@ def render_project_management_panel():
                     else:
                         st.toast("No changes to save.", icon="🤷")
 
-
             with tab_access:
                 st.subheader("Manage User Access")
                 authorized_users = details.get("authorized_users", [])
@@ -523,6 +535,54 @@ def render_project_management_panel():
                         if grant_project_access(project_uuid, email_to_add):
                             fetch_project_details(project_uuid)
                             st.rerun()
+            
+            with tab_history:
+                st.subheader("Project Conversation Log")
+                st.markdown("View and filter all conversations from users who have access to this project.")
+                
+                with st.expander("Filters and Display Options"):
+                    authorized_users = details.get("authorized_users", [])
+                    user_options = {user['email']: user['id'] for user in authorized_users}
+                    
+                    with st.form(key=f"filter_form_{project_uuid}"):
+                        filter_user_email = st.selectbox("Filter by User", options=["All Users"] + list(user_options.keys()))
+                        filter_chat_id = st.number_input("Filter by Message ID", min_value=1, step=1, value=None)
+                        
+                        c1, c2 = st.columns(2)
+                        filter_start_date = c1.date_input("Start Date", value=None)
+                        filter_end_date = c2.date_input("End Date", value=None)
+                        
+                        filter_order = st.radio("Sort Order", ["Descending", "Ascending"], index=0, horizontal=True)
+                        
+                        apply_filters = st.form_submit_button("Apply Filters", use_container_width=True)
+
+                filters_to_apply = {}
+                if apply_filters:
+                    filters_to_apply['user_id'] = user_options.get(filter_user_email) if filter_user_email != "All Users" else None
+                    filters_to_apply['chat_id'] = filter_chat_id
+                    filters_to_apply['start_time'] = datetime.combine(filter_start_date, datetime.min.time()) if filter_start_date else None
+                    filters_to_apply['end_time'] = datetime.combine(filter_end_date, datetime.max.time()) if filter_end_date else None
+                    filters_to_apply['order'] = 'desc' if filter_order == "Descending" else 'asc'
+
+                with st.spinner("Loading chat history..."):
+                    all_history = fetch_all_chat_history_from_backend(project_uuid, filters=filters_to_apply)
+
+                if all_history:
+                    history_data = [
+                        {
+                            "ID": msg.get("id"),
+                            "Timestamp": msg.get("timestamp"),
+                            "User": msg.get("user", {}).get("email", "N/A"),
+                            "Role": msg.get("role"),
+                            "Message": msg.get("content"),
+                            "Thinking": msg.get("thinking", "")
+                        } 
+                        for msg in all_history
+                    ]
+                    df = pd.DataFrame(history_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No chat history matches the current filters.")
 
 def render_admin_view():
     st.title("Admin Dashboard")
@@ -593,47 +653,65 @@ def render_uploader_view():
     st.markdown("Create projects, upload files, manage settings, and grant user access.")
     render_project_management_panel()
 
+
 def render_chatter_view(project_uuid):
     st.title(f"Chat with Project")
     st.text_input("Project UUID", project_uuid, disabled=True)
 
-    if not fetch_project_details(project_uuid):
+    project_details = fetch_project_details(project_uuid)
+    if not project_details:
         st.error("You do not have access to this project or it does not exist.")
         st.stop()
 
+    show_thinking = project_details.get("is_thinking_visible", False)
+
+    # Initialize chat history in session state ONLY when the project changes or on first load
     if "messages" not in st.session_state or st.session_state.get("chatter_project_uuid") != project_uuid:
-        st.session_state.messages = fetch_chat_history_from_backend(project_uuid)
         st.session_state.chatter_project_uuid = project_uuid
+        # Load from DB for the chatter only if history is enabled for them.
+        if project_details.get("is_chat_history_enabled", True):
+            st.session_state.messages = fetch_chat_history_from_backend(project_uuid)
+        else:
+            st.session_state.messages = [] # Start with a blank session if history is disabled for chatter
 
+    # Display all messages currently in the session state
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
+        with st.chat_message(message.get("role")):
+            # Display thinking process if it's an assistant message and the setting is enabled
+            if message.get("role") == "assistant" and show_thinking and message.get("thinking"):
+                with st.expander("Show thought process..."):
+                    st.markdown(message.get("thinking"), unsafe_allow_html=True)
+            st.markdown(message.get("content"))
+            
+    # Handle new user input
     if prompt := st.chat_input(f"Ask about this project..."):
+        # Append and display the user's message to the session state immediately
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
-        save_message_to_backend(project_uuid, "user", prompt)
+        with st.chat_message("user"):
+            st.markdown(prompt)
         
-        with st.spinner("Thinking..."), st.chat_message("assistant"):
-            response = get_rag_answer(project_uuid, prompt)
+        # Get the assistant's response from the backend (which now also saves it)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = get_rag_answer(project_uuid, prompt)
+
             if response and response.get("signal") == "rag_answer_success":
                 answer = response.get("answer", "I couldn't find an answer.")
                 thinking = response.get("thinking")
-
-                project_details = st.session_state.project_details.get(project_uuid, {})
-                show_thinking = project_details.get("is_thinking_visible", False)
-
+                
+                # Display the new response immediately from the live API response
                 if show_thinking and thinking:
                     with st.expander("Show thought process..."):
                         st.markdown(thinking, unsafe_allow_html=True)
-                
                 st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
-                save_message_to_backend(project_uuid, "assistant", answer)
+                
+                # Append the complete assistant message to the session state
+                st.session_state.messages.append({"role": "assistant", "content": answer, "thinking": thinking})
             else:
                 error_msg = "Sorry, I ran into an issue. Please try again."
                 st.markdown(error_msg)
-
+                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                
 def handle_logout(rerun=True):
     keys_to_keep = []
     for key in list(st.session_state.keys()):
@@ -643,7 +721,6 @@ def handle_logout(rerun=True):
     st.query_params.clear()
     if rerun: st.rerun()
 
-# --- Main App Logic ---
 def main():
     init_session_state()
     
@@ -662,30 +739,20 @@ def main():
     if not st.session_state.logged_in:
         render_login_page(); return
 
-    st.set_page_config(page_title="Mini RAG", layout="wide")
+    st.set_page_config(page_title="ILLA RAG", layout="wide")
     with st.sidebar:
-        st.title("Adv-RAG")
+        st.title("ILLA RAG")
         st.write(f"Welcome, **{st.session_state.username}**!")
         st.caption(f"Role: `{st.session_state.role}`")
         st.divider()
 
-        nav_options = []
+
         if st.session_state.role == "admin":
-            nav_options = ["Admin Dashboard", "Project Management"]
+            st.session_state.current_view="Admin Dashboard"
         elif st.session_state.role == "uploader":
-            nav_options = ["Project Management"]
-
-        # Default view logic
-        default_view = "Chat" if project_uuid_from_url else (nav_options[0] if nav_options else "Chat")
-        if 'current_view' not in st.session_state or st.session_state.current_view not in nav_options + ["Chat"]:
-             st.session_state.current_view = default_view
-
-        if nav_options:
-            st.session_state.current_view = st.radio(
-                "Navigation", nav_options,
-                key="nav_main",
-                index=nav_options.index(st.session_state.current_view) if st.session_state.current_view in nav_options else 0
-            )
+            st.session_state.current_view="Project Management"
+        elif st.session_state.role == "chatter":
+            st.session_state.current_view="Chat"
         
         if st.button("Logout", use_container_width=True):
             handle_logout()

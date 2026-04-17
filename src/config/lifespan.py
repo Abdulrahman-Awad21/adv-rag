@@ -1,10 +1,9 @@
+# FILE: src/config/lifespan.py
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import logging
-from sqlalchemy import update
-
-from models.db_schemes.minirag.schemes.user import User
-from services.AuthService import AuthService
+from sqlalchemy.sql import text as sql_text
 
 from .settings import get_settings
 from .database import setup_database_pool
@@ -13,7 +12,6 @@ from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from stores.llm.templates.template_parser import TemplateParser
 from services.EmailService import EmailService
 from services.UserService import UserService
-from routes.schemes.user import UserCreate
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -28,32 +26,37 @@ async def lifespan(app: FastAPI):
     # Setup Database
     app.async_db_engine, app.sync_db_engine, app.db_client = setup_database_pool(settings)
 
+    # ==================== START: CORRECTED CODE ====================
+    # Ensure the pgvector extension is enabled in the database.
+    # We use an autocommit connection for this DDL command to avoid
+    # transactional errors if the extension already exists.
+    try:
+        async with app.async_db_engine.connect() as conn:
+            # Set the connection to autocommit mode for this operation
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        logger.info("Successfully enabled 'vector' extension in the database (or it was already enabled).")
+    except Exception as e:
+        # This is a defensive check. Autocommit should prevent this, but if it still happens,
+        # we log it as a warning instead of crashing the application.
+        if "duplicate key value violates unique constraint" in str(e):
+             logger.warning("Ignoring expected 'duplicate key' error on creating existing 'vector' extension. The app will continue.")
+        else:
+            # For any other unexpected errors, we should still raise them.
+            logger.error(f"FATAL: Could not enable 'vector' extension due to an unexpected error: {e}")
+            raise
+    # ===================== END: CORRECTED CODE =====================
+
     # Setup Email Service
     app.email_service = EmailService(settings=settings)
 
-      # Create initial admin user if configured
-    if settings.INITIAL_ADMIN_EMAIL and settings.INITIAL_ADMIN_PASSWORD:
-        auth_service = AuthService(app.db_client, settings)
-        admin_user = await auth_service.get_user_by_email(settings.INITIAL_ADMIN_EMAIL)
-        
-        if not admin_user:
-            logger.info("Initial admin user not found, creating one.")
-            hashed_password = auth_service.get_password_hash(settings.INITIAL_ADMIN_PASSWORD)
-            
-            new_admin = User(
-                email=settings.INITIAL_ADMIN_EMAIL,
-                hashed_password=hashed_password,
-                role="admin",
-                password_change_required=False # Admin is ready to go
-            )
-            
-            async with app.db_client() as session:
-                session.add(new_admin)
-                await session.commit()
-            logger.info(f"Initial admin user '{settings.INITIAL_ADMIN_EMAIL}' created successfully.")
-        else:
-            logger.info("Initial admin user already exists.")
-
+    # Create initial admin user using the robust service method
+    user_service = UserService(
+        db_client=app.db_client, 
+        app_settings=settings, 
+        email_service=app.email_service
+    )
+    await user_service.create_initial_admin()
 
     # Setup LLM Clients
     llm_factory = LLMProviderFactory(settings)

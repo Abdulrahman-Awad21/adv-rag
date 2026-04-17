@@ -3,14 +3,14 @@
 from typing import List, Optional
 from sqlalchemy.orm import sessionmaker, selectinload
 from sqlalchemy.future import select
-from sqlalchemy import delete, update
+from sqlalchemy import delete, update, or_
 
 from models.ProjectModel import ProjectModel
 from models.ChatHistoryModel import ChatHistoryModel
 from models.db_schemes import Project, ChatHistory, User
-from models.db_schemes.minirag.schemes.project_access import project_access_table
+from models.db_schemes.illa_rag.schemes.project_access import ProjectAccess
 from routes.schemes.project import ProjectSettingsUpdate
-
+from datetime import datetime
 
 class ProjectService:
     def __init__(self, db_client: sessionmaker):
@@ -23,10 +23,12 @@ class ProjectService:
             else:
                 query = (
                     select(Project)
-                    .outerjoin(project_access_table)
+                    .outerjoin(ProjectAccess, Project.project_id == ProjectAccess.project_id)
                     .where(
-                        (Project.owner_id == user.id) |
-                        (project_access_table.c.user_id == user.id)
+                        or_(
+                            Project.owner_id == user.id,
+                            ProjectAccess.user_id == user.id
+                        )
                     )
                     .distinct()
                 )
@@ -49,15 +51,39 @@ class ProjectService:
         project_model = await ProjectModel.create_instance(self.db_client)
         new_project = Project(owner_id=owner.id)
         return await project_model.create_project(new_project)
-        
-    async def add_chat_message(self, project_id: int, user: User, role: str, content: str) -> ChatHistory:
+
+    async def add_chat_message(self, project_id: int, user: User, role: str, content: str, thinking: Optional[str] = None) -> ChatHistory:
         chat_history_model = await ChatHistoryModel.create_instance(self.db_client)
-        return await chat_history_model.add_message(project_id=project_id, user_id=user.id, role=role, content=content)
+        return await chat_history_model.add_message(project_id=project_id, user_id=user.id, role=role, content=content, thinking=thinking)
+
 
     async def get_chat_history(self, project_id: int, user: User, limit: int = 100, offset: int = 0) -> List[ChatHistory]:
         chat_history_model = await ChatHistoryModel.create_instance(self.db_client)
         return await chat_history_model.get_chat_history_for_project_and_user(
             project_id=project_id, user_id=user.id, limit=limit, offset=offset
+        )
+    async def get_all_chat_history_for_project(
+        self,
+        project_id: int,
+        user_id: Optional[int] = None,
+        chat_id: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        order: str = 'desc',
+        limit: int = 200,
+        offset: int = 0
+    ) -> List[ChatHistory]:
+        """Service method to fetch all chat history for a given project with filters."""
+        chat_history_model = await ChatHistoryModel.create_instance(self.db_client)
+        return await chat_history_model.get_all_chat_history_for_project(
+            project_id=project_id,
+            user_id=user_id,
+            chat_id=chat_id,
+            start_time=start_time,
+            end_time=end_time,
+            order=order,
+            limit=limit,
+            offset=offset
         )
 
     async def clear_chat_history(self, project_id: int) -> int:
@@ -70,7 +96,6 @@ class ProjectService:
             return project
 
         async with self.db_client() as session:
-            # <-- FIX: Get a "live" instance of the project within this session before updating.
             project_in_session = await session.get(Project, project.project_id)
             if not project_in_session:
                 return None 
@@ -78,12 +103,11 @@ class ProjectService:
             stmt = update(Project).where(Project.project_id == project_in_session.project_id).values(**update_data)
             await session.execute(stmt)
             await session.commit()
-            await session.refresh(project_in_session) # Refresh to get the updated values
+            await session.refresh(project_in_session)
             return project_in_session
 
     async def grant_project_access(self, project: Project, target_user: User) -> bool:
         async with self.db_client() as session:
-            # <-- FIX: Get live, session-managed instances of both project and user.
             project_in_session = await session.get(Project, project.project_id, options=[selectinload(Project.authorized_users)])
             target_user_in_session = await session.get(User, target_user.id)
 
@@ -91,7 +115,7 @@ class ProjectService:
                 return False
 
             if target_user_in_session in project_in_session.authorized_users:
-                return True # Already has access
+                return True
             
             project_in_session.authorized_users.append(target_user_in_session)
             session.add(project_in_session)
@@ -100,7 +124,6 @@ class ProjectService:
         
     async def revoke_project_access(self, project: Project, target_user: User) -> bool:
         async with self.db_client() as session:
-            # <-- FIX: Get a live, session-managed instance of the project.
             project_in_session = await session.get(Project, project.project_id, options=[selectinload(Project.authorized_users)])
             target_user_in_session = await session.get(User, target_user.id)
 
@@ -108,7 +131,7 @@ class ProjectService:
                 return False
 
             if target_user_in_session not in project_in_session.authorized_users:
-                return False # User didn't have access, nothing to revoke
+                return False
 
             project_in_session.authorized_users.remove(target_user_in_session)
             session.add(project_in_session)

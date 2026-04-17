@@ -11,7 +11,7 @@ from config.settings import get_settings, Settings
 from services.AuthService import AuthService
 from .schemes.auth import TokenData
 from models.db_schemes import User, Project
-from models.db_schemes.minirag.schemes.project_access import project_access_table
+from models.db_schemes.illa_rag.schemes.project_access import ProjectAccess
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
 
@@ -71,14 +71,15 @@ async def get_project_from_uuid_and_verify_access(
         if current_user.role == "admin":
             stmt = select(Project).where(Project.project_uuid == project_uuid)
         else:
+            # UPDATED: The query now joins with the ProjectAccess class
             stmt = (
                 select(Project)
-                .outerjoin(project_access_table, Project.project_id == project_access_table.c.project_id)
+                .outerjoin(ProjectAccess, Project.project_id == ProjectAccess.project_id)
                 .where(
                     Project.project_uuid == project_uuid,
                     or_(
                         Project.owner_id == current_user.id,
-                        project_access_table.c.user_id == current_user.id
+                        ProjectAccess.user_id == current_user.id
                     )
                 )
                 .distinct()

@@ -1,10 +1,12 @@
-from .minirag_base import SQLAlchemyBase
+# FILE: src/models/db_schemes/illa_rag/schemes/user.py
+
+from .illa_rag_base import SQLAlchemyBase
 from sqlalchemy import Column, Integer, DateTime, func, String, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy import Index
 
-# Import the association table
-from .project_access import project_access_table
+# The import of project_access_table is no longer needed
+# from .project_access import project_access_table
 
 class User(SQLAlchemyBase):
     __tablename__ = "users"
@@ -25,7 +27,6 @@ class User(SQLAlchemyBase):
     # New relationship to get projects a user can access
     accessible_projects = relationship(
         "Project",
-        secondary=project_access_table,
+        secondary='project_access',
         back_populates="authorized_users"
     )
-    

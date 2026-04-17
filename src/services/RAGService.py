@@ -161,8 +161,10 @@ class RAGService:
             thinking_log.append(f"LLM Synthesis Reasoning:\n{llm_internal_thoughts}")
             
         return "\n".join(thinking_log), clean_draft_answer, full_prompt_sent_to_llm
+    
+    
 
-    async def answer_question(self, project: Project, query: str, request: Request, user: User, email_service: EmailService, limit: int = 10) -> dict:
+    async def answer_question(self, project: Project, query: str, request: Request, user: User, email_service: EmailService, limit: int = 10, user_message_id: Optional[int] = None) -> dict:
         """Processes a user's question and triggers failure notifications if needed."""
         # Helper function to send email notification
         async def notify_owner(failed_answer: str):
@@ -172,13 +174,17 @@ class RAGService:
                     project_uuid=str(project.project_uuid),
                     user_email=user.email,
                     question=query,
-                    model_answer=failed_answer
+                    model_answer=failed_answer,
+                    user_message_id=user_message_id
                 )
         
         # Phase 1: Intent Classification
         intent_prompt = self.template_parser.get("rag", "intent_classification_prompt", vars={"question": query})
         llm_response = self.generation_client.generate_text(prompt=intent_prompt)
-        
+
+        if not llm_response:
+            raise ValueError("LLM generation client returned None. Check your API key and model configuration.")
+
         intent_classification = re.sub(r'[^a-zA-Z_]', '', llm_response).strip().lower()
 
         if intent_classification == 'violation':
@@ -198,19 +204,30 @@ class RAGService:
 
         # Phase 4: Moderation & Finalization
         final_clean_answer = ""
+        
+        # Check 1: Did the initial synthesis fail?
         if draft_clean_answer.strip() == "NO_ANSWER":
             final_clean_answer = "I'm sorry, I couldn't find a relevant answer in the provided documents."
-            thinking_log += "\n\n---\nNOTE: Final answer overridden because synthesis resulted in NO_ANSWER."
+            thinking_log += "\n\n---\nNOTE: Final answer overridden because initial synthesis resulted in NO_ANSWER."
             await notify_owner(final_clean_answer)
         else:
+            # If synthesis was successful, proceed to moderation.
             moderation_prompt = self.template_parser.get("rag", "answer_moderation_prompt", vars={"question": query, "draft_answer": draft_clean_answer})
             raw_moderated_output = self.generation_client.generate_text(prompt=moderation_prompt)
 
-            moderator_thinking, final_clean_answer = self._parse_llm_final_answer(raw_moderated_output)
+            moderator_thinking, moderated_answer = self._parse_llm_final_answer(raw_moderated_output)
             
             if moderator_thinking:
                 thinking_log += f"\n\n---\nFinal Moderation/Refinement Step:\n{moderator_thinking}"
 
+            # Check 2: Did the MODERATION step decide the draft was irrelevant?
+            if moderated_answer.strip() == "NO_ANSWER":
+                final_clean_answer = "I'm sorry, I couldn't find a relevant answer in the provided documents."
+                thinking_log += "\n\n---\nNOTE: Final answer overridden because the moderation step determined the draft was off-topic."
+                await notify_owner(final_clean_answer)
+            else:
+                # If we passed both checks, the moderated answer is the final answer.
+                final_clean_answer = moderated_answer
         return {
             "answer": final_clean_answer,
             "thinking": thinking_log,

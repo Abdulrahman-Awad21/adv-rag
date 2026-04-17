@@ -39,8 +39,9 @@ class AuthService:
 
     async def get_user_by_email(self, email: str) -> Optional[User]:
         """Retrieves a user by email from the database."""
+        normailized_email  = email.lower()
         async with self.db_client() as session:
-            result = await session.execute(select(User).where(User.email == email))
+            result = await session.execute(select(User).where(User.email == normailized_email))
             return result.scalar_one_or_none()
 
     def create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None) -> str:

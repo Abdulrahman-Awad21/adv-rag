@@ -1,14 +1,14 @@
-# FILE: src/models/db_schemes/minirag/schemes/project.py
+# FILE: src/models/db_schemes/illa_rag/schemes/project.py
 
-from .minirag_base import SQLAlchemyBase
+from .illa_rag_base import SQLAlchemyBase
 from sqlalchemy import Column, Integer, DateTime, func, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from sqlalchemy.orm import relationship
 from sqlalchemy import text # Import text
 
-# Import the association table
-from .project_access import project_access_table
+# The import of project_access_table is no longer needed
+# from .project_access import project_access_table
 
 class Project(SQLAlchemyBase):
 
@@ -33,7 +33,7 @@ class Project(SQLAlchemyBase):
     # New relationship to get users with access
     authorized_users = relationship(
         "User",
-        secondary=project_access_table,
+        secondary='project_access', 
         back_populates="accessible_projects",
         lazy="selectin"
     )

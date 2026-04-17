@@ -1,7 +1,8 @@
 # FILE: src/routes/project.py
 
 from fastapi import APIRouter, Depends, Request, Response, status, HTTPException
-from typing import List
+from typing import List, Optional
+from datetime import datetime
 
 from models.db_schemes import User, Project
 from services.ProjectService import ProjectService
@@ -10,7 +11,7 @@ from .dependencies import get_current_user, require_uploader_role, get_project_f
 from .schemes.chat import ChatMessageCreate, ChatMessageResponse
 from .schemes.project import ProjectAccessRequest, ProjectSettingsUpdate, ProjectDetailsResponse, ProjectListResponse
 from .schemes.user import UserInDB
-
+from .schemes.chat import ChatMessageCreate, ChatMessageResponse, ChatMessageWithUserResponse
 project_router = APIRouter(
     prefix="/api/v1/projects",
     tags=["api_v1", "projects"], 
@@ -91,6 +92,34 @@ async def get_project_chat_messages(
     history = await service.get_chat_history(
         project_id=project.project_id, 
         user=current_user,
+        limit=limit,
+        offset=offset
+    )
+    return history
+
+@project_router.get("/{project_uuid}/all_chat_history", response_model=List[ChatMessageWithUserResponse])
+async def get_all_project_chat_messages(
+    project: Project = Depends(get_project_from_uuid_and_verify_access),
+    service: ProjectService = Depends(get_project_service),
+    current_user: User = Depends(require_uploader_role),
+    user_id: Optional[int] = None,
+    chat_id: Optional[int] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    order: Optional[str] = 'desc',
+    limit: int = 200,
+    offset: int = 0
+):
+    """
+    Endpoint for project owners/admins to view all chat history for a project, with optional filters.
+    """
+    history = await service.get_all_chat_history_for_project(
+        project_id=project.project_id, 
+        user_id=user_id,
+        chat_id=chat_id,
+        start_time=start_time,
+        end_time=end_time,
+        order=order,
         limit=limit,
         offset=offset
     )

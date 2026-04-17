@@ -15,6 +15,12 @@ class UserUpdate(BaseModel):
 class SetInitialPassword(BaseModel):
     token: str
     new_password: str = Field(min_length=8)
+
+class UserEmailResponse(BaseModel):
+    email: EmailStr
+
+    class Config:
+        from_attributes = True
     
 class UserInDB(UserBase):
     id: int

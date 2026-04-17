@@ -136,7 +136,7 @@ Navigate to the Alembic configuration directory:
 
 From the project root
 ```bash
-cd src/models/db_schemes/minirag
+cd src/models/db_schemes/illa_rag
 ```
 
 Make a copy of the Alembic config and update it with your PostgreSQL connection string from your .env file.
@@ -152,7 +152,7 @@ alembic upgrade head
 
 
 Navigate back to the src directory:
-From your current location in .../minirag
+From your current location in .../illa_rag
 ```bash
 cd ../../../
 ```
@@ -186,7 +186,7 @@ Use the credentials from `.env` to log in:
 
 ## 🧪 Making API Requests with Postman
 
-A Postman collection is available at `src/assets/mini-rag-app.postman_collection.json`.
+A Postman collection is available at `src/assets/illa-rag-app.postman_collection.json`.
 
 ### 1. Import the Collection
 

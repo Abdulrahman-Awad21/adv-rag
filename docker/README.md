@@ -5,7 +5,6 @@ This directory contains the Docker Compose configuration to run the entire Adv-R
 ## Services Managed by Docker Compose
 
 -   **`fastapi`**: The main Python backend application running on Uvicorn.
--   **`nginx`**: A reverse proxy that serves the FastAPI application.
 -   **`pgvector`**: PostgreSQL database with the `pgvector` extension for relational data and vector similarity search.
 -   **`qdrant`**: An alternative vector database for high-performance similarity search.
 -   **`prometheus`**: A metrics collection and time-series database.
@@ -42,22 +41,22 @@ This directory contains the Docker Compose configuration to run the entire Adv-R
     -   SMTP credentials for sending emails (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, etc.).
     Also edit the variables in other .env files
 
-3.  **Setup the Alembic configuration for the FastAPI application:** 
+3.  **Setup the Alembic configuration for the FastAPI application:**
 
     ```bash
-    cd docker/minirag
+    cd docker/illa_rag
     cp alembic.example.ini alembic.ini
     cd ..
     ```
-    
-    
+
+
 
 4.  **Build and Start Services:**
     Use Docker Compose to build the images and start all containers in detached mode.
     ```bash
     sudo docker compose up --build -d
     ```
-    
+
     If you encounter connection issues, you may want to start the database services first and let them initialize before starting the application:
 
     ```bash

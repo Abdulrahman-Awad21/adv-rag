@@ -3,7 +3,7 @@ services:
   fastapi:
     build:
       context: ..
-      dockerfile: docker/minirag/Dockerfile
+      dockerfile: docker/illa_rag/Dockerfile
     container_name: fastapi
     ports:
       - "8000:8000"
@@ -18,20 +18,21 @@ services:
     env_file:
       - ./env/.env.app
 
-  # Nginx Service
-  nginx:
-    image: nginx:stable-alpine3.20-perl
-    container_name: nginx
+# Streamlit Frontend
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    container_name: frontend
     ports:
-      - "80:80"
-    volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-    depends_on:
-      - fastapi
+      - "8501:8501"
     networks:
       - backend
     restart: always
-
+    depends_on:
+      - fastapi
+    env_file:
+      - ./env/.env.app
 
   # PostgreSQL (pgvector)
   pgvector:
@@ -100,7 +101,6 @@ services:
     networks:
       - backend
     restart: always
-
 
   # Node Exporter for system metrics
   node-exporter:
