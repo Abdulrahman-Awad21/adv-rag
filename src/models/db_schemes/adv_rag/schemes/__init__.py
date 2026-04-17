@@ -1,5 +1,5 @@
 
-from .illa_rag_base import SQLAlchemyBase
+from .adv_rag_base import SQLAlchemyBase
 from .project_access import ProjectAccess 
 from .user import User
 from .project import Project

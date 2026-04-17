@@ -1,6 +1,6 @@
-# FILE: src/models/db_schemes/illa_rag/schemes/project_access.py
+# FILE: src/models/db_schemes/adv_rag/schemes/project_access.py
 
-from .illa_rag_base import SQLAlchemyBase
+from .adv_rag_base import SQLAlchemyBase
 from sqlalchemy import Column, Integer, ForeignKey, UniqueConstraint
 
 

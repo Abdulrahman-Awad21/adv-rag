@@ -8,7 +8,7 @@ from sqlalchemy import delete, update, or_
 from models.ProjectModel import ProjectModel
 from models.ChatHistoryModel import ChatHistoryModel
 from models.db_schemes import Project, ChatHistory, User
-from models.db_schemes.illa_rag.schemes.project_access import ProjectAccess
+from models.db_schemes.adv_rag.schemes.project_access import ProjectAccess
 from routes.schemes.project import ProjectSettingsUpdate
 from datetime import datetime
 

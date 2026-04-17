@@ -11,7 +11,7 @@ from config.settings import get_settings, Settings
 from services.AuthService import AuthService
 from .schemes.auth import TokenData
 from models.db_schemes import User, Project
-from models.db_schemes.illa_rag.schemes.project_access import ProjectAccess
+from models.db_schemes.adv_rag.schemes.project_access import ProjectAccess
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
 

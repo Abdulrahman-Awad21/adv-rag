@@ -1,6 +1,6 @@
-# FILE: src/models/db_schemes/illa_rag/schemes/user.py
+# FILE: src/models/db_schemes/adv_rag/schemes/user.py
 
-from .illa_rag_base import SQLAlchemyBase
+from .adv_rag_base import SQLAlchemyBase
 from sqlalchemy import Column, Integer, DateTime, func, String, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy import Index

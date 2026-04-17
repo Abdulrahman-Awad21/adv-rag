@@ -1,1 +1,1 @@
-from models.db_schemes.illa_rag.schemes import Project, DataChunk, Asset, RetrievedDocument, ChatHistory, User
+from models.db_schemes.adv_rag.schemes import Project, DataChunk, Asset, RetrievedDocument, ChatHistory, User

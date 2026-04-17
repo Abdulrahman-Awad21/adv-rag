@@ -1,9 +1,7 @@
 name: Deploy main Branch to Server
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -21,10 +19,10 @@ jobs:
           username: github_user
           key: ${{ secrets.SSH_MAIN_PRIVATE_KEY }}
           script: |
-            cd /home/github_user/workspace/ILLA-RAG
+            cd /home/github_user/workspace/Adv-RAG
             git checkout main
             git pull
-            sudo systemctl restart illa-rag.service
+            sudo systemctl restart adv-rag.service
             echo "Waiting..."
             sleep 20
 

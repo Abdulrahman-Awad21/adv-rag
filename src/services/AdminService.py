@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from controllers.DataController import DataController
 from config.settings import Settings
-from models.db_schemes.illa_rag.schemes import SQLAlchemyBase
+from models.db_schemes.adv_rag.schemes import SQLAlchemyBase
 from .UserService import UserService
 from .EmailService import EmailService
 

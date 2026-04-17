@@ -1,4 +1,4 @@
-APP_NAME="ILLA-RAG"
+APP_NAME="Adv-RAG"
 APP_VERSION="0.1"
 
 FILE_ALLOWED_TYPES=["text/plain", "application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
@@ -9,7 +9,7 @@ POSTGRES_USERNAME="postgres"
 POSTGRES_PASSWORD="postgres_password"
 POSTGRES_HOST="pgvector"
 POSTGRES_PORT=5432
-POSTGRES_MAIN_DATABASE="ILLA-RAG"
+POSTGRES_MAIN_DATABASE="Adv-RAG"
 
 
 # ========================= Security Config =========================

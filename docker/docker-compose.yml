@@ -3,7 +3,7 @@ services:
   fastapi:
     build:
       context: ..
-      dockerfile: docker/illa_rag/Dockerfile
+      dockerfile: docker/adv_rag/Dockerfile
     container_name: fastapi
     ports:
       - "8000:8000"

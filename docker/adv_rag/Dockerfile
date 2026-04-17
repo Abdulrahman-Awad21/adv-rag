@@ -23,11 +23,11 @@ RUN uv pip install -r requirements.txt --system
 COPY src/ .
 
 # Create directory structure for Alembic
-RUN mkdir -p /app/models/db_schemes/illa_rag/
+RUN mkdir -p /app/models/db_schemes/adv_rag/
 
-COPY docker/illa_rag/alembic.ini /app/models/db_schemes/illa_rag/alembic.ini
+COPY docker/adv_rag/alembic.ini /app/models/db_schemes/adv_rag/alembic.ini
 
-COPY docker/illa_rag/entrypoint.sh /entrypoint.sh
+COPY docker/adv_rag/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

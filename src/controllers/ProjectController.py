@@ -3,7 +3,7 @@ from fastapi import UploadFile
 from models import ResponseSignal
 import os
 from models.ChatHistoryModel import ChatHistoryModel
-from models.db_schemes.illa_rag.schemes import ChatHistory # For type hinting
+from models.db_schemes.adv_rag.schemes import ChatHistory # For type hinting
 from typing import List
 
 class ProjectController(BaseController):

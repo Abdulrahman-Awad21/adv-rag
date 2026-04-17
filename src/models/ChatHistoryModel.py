@@ -1,5 +1,5 @@
 from .BaseDataModel import BaseDataModel
-from .db_schemes.illa_rag.schemes import ChatHistory, Project
+from .db_schemes.adv_rag.schemes import ChatHistory, Project
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload
 from typing import List, Optional

@@ -1,6 +1,6 @@
 # Frontend (Streamlit) Application
 
-This directory contains the Streamlit application that serves as the user interface for the ILLA-RAG system.
+This directory contains the Streamlit application that serves as the user interface for the Adv-RAG system.
 
 ## Overview
 

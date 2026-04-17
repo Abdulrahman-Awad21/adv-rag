@@ -65,10 +65,10 @@ class EmailService:
             logger.error(f"Failed to send RAG failure notification email to {owner_email}: {e}")
 
     async def send_account_setup_email(self, email_to: EmailStr, token: str):
-        subject = "Set Up Your Account for ILLA-RAG"
+        subject = "Set Up Your Account for Adv-RAG"
         setup_link = f"{self.settings.FRONTEND_URL}/?view=set_password&token={token}"
         body = f"""
-        <p>Welcome to the ILLA-RAG system!</p>
+        <p>Welcome to the Adv-RAG system!</p>
         <p>An account has been created for you. Please click the link below to set your password. This link is valid for 24 hours.</p>
         <p><a href="{setup_link}">{setup_link}</a></p>
         <p>If you did not request this, please ignore this email.</p>
@@ -87,9 +87,9 @@ class EmailService:
             logger.error(f"Failed to send account setup email to {email_to}: {e}")
 
     async def send_new_account_email(self, email_to: EmailStr, temporary_password: str):
-        subject = "Your New Account for ILLA-RAG"
+        subject = "Your New Account for Adv-RAG"
         body = f"""
-        <p>Welcome to the ILLA-RAG system!</p>
+        <p>Welcome to the Adv-RAG system!</p>
         <p>An account has been created for you. Please log in using the following temporary password and change it immediately.</p>
         <p><b>Temporary Password:</b> {temporary_password}</p>
         """
@@ -107,10 +107,10 @@ class EmailService:
             logger.error(f"Failed to send new account email to {email_to}: {e}")
 
     async def send_password_reset_email(self, email_to: EmailStr, token: str):
-        subject = "Password Reset Request for ILLA-RAG"
+        subject = "Password Reset Request for Adv-RAG"
         reset_link = f"{self.settings.FRONTEND_URL}/?view=reset_password&token={token}"
         body = f"""
-        <p>You requested a password reset for your ILLA-RAG account.</p>
+        <p>You requested a password reset for your Adv-RAG account.</p>
         <p>Please click the link below to set a new password. This link is valid for 15 minutes.</p>
         <p><a href="{reset_link}">{reset_link}</a></p>
         <p>If you did not request this, please ignore this email.</p>

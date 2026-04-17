@@ -332,8 +332,8 @@ def nuke_system_on_backend():
 # --- UI Rendering Functions ---
 
 def render_login_page():
-    st.set_page_config(page_title="Login - ILLA RAG", layout="centered")
-    st.title("Welcome to ILLA RAG")
+    st.set_page_config(page_title="Login - Adv RAG", layout="centered")
+    st.title("Welcome to Adv RAG")
     
     with st.form("login_form"):
         email = st.text_input("Email")
@@ -739,9 +739,9 @@ def main():
     if not st.session_state.logged_in:
         render_login_page(); return
 
-    st.set_page_config(page_title="ILLA RAG", layout="wide")
+    st.set_page_config(page_title="Adv RAG", layout="wide")
     with st.sidebar:
-        st.title("ILLA RAG")
+        st.title("Adv RAG")
         st.write(f"Welcome, **{st.session_state.username}**!")
         st.caption(f"Role: `{st.session_state.role}`")
         st.divider()
